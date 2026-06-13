@@ -9,6 +9,18 @@ description = "MCP server for Google Docs with verified writes"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12"
+authors = [{ name = "Michael Sutton" }]
+keywords = ["mcp", "model-context-protocol", "google-docs", "llm", "agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business",
+    "Topic :: Software Development :: Libraries",
+]
 dependencies = [
     "fastmcp>=3.0",
     "google-api-python-client>=2.0",
@@ -16,6 +28,11 @@ dependencies = [
     "google-auth-httplib2>=0.2",
     "markdown-it-py>=3.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/michaelrobertsutton/googledocs-mcp"
+Repository = "https://github.com/michaelrobertsutton/googledocs-mcp"
+Issues = "https://github.com/michaelrobertsutton/googledocs-mcp/issues"
 
 [project.optional-dependencies]
 dev = [
