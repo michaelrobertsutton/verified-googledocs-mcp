@@ -1,6 +1,6 @@
 {
   "title": "verified-googledocs-mcp fixture doc",
-  "revisionId": "AFwiY1_YSXhjY0V8gJvzSbQ8LFcHaaNKBueaSkrCvWxivU02u92STrfcOlESWzfvWiv_HjyLGmNX82xnVAcK1H0qSI7ci4yVEOmbUh9Ud3s",
+  "revisionId": "AFwiY19u9AiUTgeXZ45l3Kv6ABVM-L9E1KbI-jTmqU_CCoybrmz_JMOxu3uuYajt8r0ZQYudh5K97xXIR_KnMmT77gGa4e71ZzKiIDtnBck",
   "suggestionsViewMode": "PREVIEW_WITHOUT_SUGGESTIONS",
   "documentId": "1Zm_6bAwA7UH1DKkGVL3kg9XcQ6rIZHmUFcQPTcoJb6Y",
   "tabs": [
@@ -185,14 +185,14 @@
             },
             {
               "startIndex": 195,
-              "endIndex": 240,
+              "endIndex": 252,
               "paragraph": {
                 "elements": [
                   {
                     "startIndex": 195,
-                    "endIndex": 240,
+                    "endIndex": 252,
                     "textRun": {
-                      "content": "The quick brown fox jumps over the lazy dog.\n",
+                      "content": "The quick brown fox jumps over the lazy dog. [rev-probe]\n",
                       "textStyle": {}
                     }
                   }
