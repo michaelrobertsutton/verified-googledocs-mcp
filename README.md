@@ -125,18 +125,49 @@ The server talks to Google with your own OAuth credentials. One-time setup:
 
    This opens a browser, completes consent, and caches a refreshable token at `~/.config/verified-googledocs-mcp/token.json`. Auth runs only here, never inside the server, because MCP clients start the server headless.
 
-Then register the server with your MCP client. Most clients use the standard `mcpServers` config block:
+Then register the server with your MCP client.
+
+### Claude Code
+
+A project-local `.mcp.json` is included in the repo. Clone and open the project and Claude Code picks it up automatically — no manual config required:
+
+```bash
+git clone https://github.com/michaelrobertsutton/verified-googledocs-mcp
+cd verified-googledocs-mcp
+claude  # .mcp.json is loaded automatically
+```
+
+### Claude Desktop and other clients
+
+Most clients use the standard `mcpServers` config block. Add the following to your client's config file:
 
 ```jsonc
 {
   "mcpServers": {
-    "verified-googledocs": {
+    "verified-googledocs-mcp": {
       "command": "uv",
-      "args": ["run", "verified-googledocs-mcp"]
+      "args": ["run", "verified-googledocs-mcp"],
+      "cwd": "/path/to/verified-googledocs-mcp"
     }
   }
 }
 ```
+
+**PATH note for headless clients:** Claude Desktop and similar clients launch the server as a subprocess with a minimal `PATH` that may not include Homebrew or user-local bins. If `uv` is not found, use its full path:
+
+```jsonc
+{
+  "mcpServers": {
+    "verified-googledocs-mcp": {
+      "command": "/opt/homebrew/bin/uv",
+      "args": ["run", "verified-googledocs-mcp"],
+      "cwd": "/path/to/verified-googledocs-mcp"
+    }
+  }
+}
+```
+
+Find the full path with `which uv`. On Apple Silicon the Homebrew prefix is `/opt/homebrew`; on Intel Mac it is `/usr/local`.
 
 The server uses the `documents` and `drive` scopes (comments require Drive). The credentials path is overridable with `VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS`.
 
