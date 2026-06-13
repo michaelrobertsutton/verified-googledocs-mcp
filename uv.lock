@@ -524,6 +524,7 @@ dependencies = [
     { name = "google-api-python-client" },
     { name = "google-auth-httplib2" },
     { name = "google-auth-oauthlib" },
+    { name = "markdown-it-py" },
 ]
 
 [package.optional-dependencies]
@@ -539,6 +540,7 @@ requires-dist = [
     { name = "google-api-python-client", specifier = ">=2.0" },
     { name = "google-auth-httplib2", specifier = ">=0.2" },
     { name = "google-auth-oauthlib", specifier = ">=1.0" },
+    { name = "markdown-it-py", specifier = ">=3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
