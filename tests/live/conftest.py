@@ -40,13 +40,13 @@ from typing import Any
 
 import pytest
 
-# Canonical seeded fixture (issue #1). Override via env for a different doc.
+# Canonical seeded fixture (issue #1, extended in #31). Override via env.
 DEFAULT_DOC_ID = "1Zm_6bAwA7UH1DKkGVL3kg9XcQ6rIZHmUFcQPTcoJb6Y"
 
-# A HEADING_1 paragraph the suite seeds onto scratch copies, because the
-# canonical fixture has no headings yet (gap tracked in #31). Gives
-# find_sections / replace_range_markdown real live substrate.
-SEEDED_HEADING_TEXT = "Acceptance Gate Heading"
+# Real substrate seeded into the canonical fixture (and inherited by every
+# files.copy of it): a HEADING_1 paragraph and a nested tab. See #31.
+CANONICAL_HEADING_TEXT = "Text Hazards"  # HEADING_1 in t.0, resolves to range [1, 14)
+CANONICAL_NESTED_TAB_ID = "t.22v4eg81pdjk"  # "Nested Tab", child of t.0
 
 
 # ---------------------------------------------------------------------------
@@ -63,9 +63,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-def pytest_collection_modifyitems(
-    config: pytest.Config, items: list[pytest.Item]
-) -> None:
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     if config.getoption("--run-live"):
         return
     skip_live = pytest.mark.skip(
@@ -168,46 +166,6 @@ def scratch_doc(live_services: tuple[Any, Any], canonical_doc_id: str):  # type:
             drive.files().delete(fileId=scratch.doc_id).execute()
         except Exception:  # noqa: BLE001 — best-effort cleanup
             pass
-
-
-def _seed_heading(docs: Any, doc_id: str, tab_id: str, text: str) -> None:
-    """Insert a HEADING_1 paragraph at the top of the tab via batchUpdate."""
-    docs.documents().batchUpdate(
-        documentId=doc_id,
-        body={
-            "requests": [
-                {
-                    "insertText": {
-                        "location": {"index": 1, "tabId": tab_id},
-                        "text": text + "\n",
-                    }
-                },
-                {
-                    "updateParagraphStyle": {
-                        "range": {
-                            "startIndex": 1,
-                            "endIndex": 1 + len(text) + 1,
-                            "tabId": tab_id,
-                        },
-                        "paragraphStyle": {"namedStyleType": "HEADING_1"},
-                        "fields": "namedStyleType",
-                    }
-                },
-            ]
-        },
-    ).execute(num_retries=3)
-
-
-@pytest.fixture
-def scratch_doc_with_heading(live_services: tuple[Any, Any], scratch_doc):  # type: ignore[no-untyped-def]
-    """A scratch copy with a seeded HEADING_1, so find_sections has substrate.
-
-    Carries ``heading_text`` for the heading the test should look up.
-    """
-    docs, _ = live_services
-    _seed_heading(docs, scratch_doc.doc_id, scratch_doc.primary_tab, SEEDED_HEADING_TEXT)
-    scratch_doc.heading_text = SEEDED_HEADING_TEXT
-    return scratch_doc
 
 
 # ---------------------------------------------------------------------------

@@ -41,17 +41,13 @@ class TestCommentResolutionCycle:
 
         # resolve
         resolved = (
-            await client.call_tool(
-                "resolve_comment", {"doc_id": doc, "comment_id": cid}
-            )
+            await client.call_tool("resolve_comment", {"doc_id": doc, "comment_id": cid})
         ).data
         assert resolved["applied"] is True and resolved["resolved"] is True
 
         # confirm closed — re-query, no manual step
         thread = (
-            await client.call_tool(
-                "get_comment_thread", {"doc_id": doc, "comment_id": cid}
-            )
+            await client.call_tool("get_comment_thread", {"doc_id": doc, "comment_id": cid})
         ).data
         assert thread["resolved"] is True
 
@@ -62,9 +58,7 @@ class TestMarkdownSyncRoundTrip:
 
         # The local file we want the tab to converge to (supported subset).
         desired = (
-            "# Synced Document\n\n"
-            "First paragraph after sync.\n\n"
-            "Second paragraph after sync.\n"
+            "# Synced Document\n\nFirst paragraph after sync.\n\nSecond paragraph after sync.\n"
         )
         f = tmp_path / "desired.md"
         f.write_text(desired, encoding="utf-8")
@@ -90,11 +84,9 @@ class TestMarkdownSyncRoundTrip:
         # convergence is proven below by re-reading the content directly.)
 
         # 3. re-read + re-diff — the tab has converged toward the file.
-        content = (
-            await client.call_tool(
-                "read_document", {"doc_id": doc, "tab_id": tab}
-            )
-        ).data["content"]
+        content = (await client.call_tool("read_document", {"doc_id": doc, "tab_id": tab})).data[
+            "content"
+        ]
         assert "Synced Document" in content
         assert "First paragraph after sync" in content
         assert "Second paragraph after sync" in content

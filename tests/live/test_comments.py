@@ -30,9 +30,7 @@ def _err(result) -> str:  # type: ignore[no-untyped-def]
 
 class TestListOpenItems:
     async def test_returns_comments_and_suggestions_together(self, client, canonical_doc_id):
-        data = (
-            await client.call_tool("list_open_items", {"doc_id": canonical_doc_id})
-        ).data
+        data = (await client.call_tool("list_open_items", {"doc_id": canonical_doc_id})).data
 
         # Open comments present (the two seeded threads).
         assert len(data["open_comments"]) >= 2

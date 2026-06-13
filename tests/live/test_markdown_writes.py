@@ -34,11 +34,15 @@ async def _read(client, doc_id, tab_id) -> str:  # type: ignore[no-untyped-def]
     return r.data["content"]
 
 
+# The canonical fixture's HEADING_1 (seeded for #31); inherited by every copy.
+HEADING = "Text Hazards"
+
+
 async def _range_replace(client, s):  # type: ignore[no-untyped-def]
     m = (
         await client.call_tool(
             "find_sections",
-            {"doc_id": s.doc_id, "tab_id": s.primary_tab, "heading": "Acceptance"},
+            {"doc_id": s.doc_id, "tab_id": s.primary_tab, "heading": HEADING},
         )
     ).data["matches"][0]
     return await client.call_tool(
@@ -61,33 +65,28 @@ async def _range_replace(client, s):  # type: ignore[no-untyped-def]
 
 
 class TestReplaceRangeMarkdown:
-    async def test_replaces_a_find_sections_range(self, client, scratch_doc_with_heading):
-        s = scratch_doc_with_heading
-        r = await _range_replace(client, s)
+    async def test_replaces_a_find_sections_range(self, client, scratch_doc):
+        r = await _range_replace(client, scratch_doc)
         assert r.data["applied"] is True
         assert r.data["revision_before"] != r.data["revision_after"]
         # The new heading content landed in the document.
-        assert "Renamed Heading" in await _read(client, s.doc_id, s.primary_tab)
+        assert "Renamed Heading" in await _read(client, scratch_doc.doc_id, scratch_doc.primary_tab)
 
     @pytest.mark.xfail(
         reason="#36 — to_markdown omits blank lines between blocks, so the re-export "
         "structural comparison false-negatives. The write is correct; the evidence flag is not.",
         strict=False,
     )
-    async def test_range_replace_structural_match_evidence(
-        self, client, scratch_doc_with_heading
-    ):
-        r = await _range_replace(client, scratch_doc_with_heading)
+    async def test_range_replace_structural_match_evidence(self, client, scratch_doc):
+        r = await _range_replace(client, scratch_doc)
         assert r.data["structural_match"] is True
 
-    async def test_stale_range_after_doc_moves_on(
-        self, client, scratch_doc_with_heading, live_services
-    ):
-        s = scratch_doc_with_heading
+    async def test_stale_range_after_doc_moves_on(self, client, scratch_doc, live_services):
+        s = scratch_doc
         m = (
             await client.call_tool(
                 "find_sections",
-                {"doc_id": s.doc_id, "tab_id": s.primary_tab, "heading": "Acceptance"},
+                {"doc_id": s.doc_id, "tab_id": s.primary_tab, "heading": HEADING},
             )
         ).data["matches"][0]
 
@@ -129,10 +128,7 @@ class TestReplaceRangeMarkdown:
 
 class TestReplaceTabMarkdown:
     MARKDOWN = (
-        "# Replaced Tab\n\n"
-        "First synced paragraph.\n\n"
-        "- one\n- two\n\n"
-        "Second synced paragraph.\n"
+        "# Replaced Tab\n\nFirst synced paragraph.\n\n- one\n- two\n\nSecond synced paragraph.\n"
     )
 
     async def test_whole_tab_replace_lands_new_content(self, client, scratch_doc):
@@ -231,11 +227,15 @@ class TestInsertImage:
         assert r.data["applied"] is True
         assert r.data["revision_before"] != r.data["revision_after"]
 
-    async def test_url_at_heading_applies(self, client, scratch_doc_with_heading):
-        s = scratch_doc_with_heading
+    async def test_url_at_heading_applies(self, client, scratch_doc):
         r = await client.call_tool(
             "insert_image",
-            {"doc_id": s.doc_id, "tab_id": s.primary_tab, "anchor": s.heading_text, "source": IMG_URL},
+            {
+                "doc_id": scratch_doc.doc_id,
+                "tab_id": scratch_doc.primary_tab,
+                "anchor": HEADING,
+                "source": IMG_URL,
+            },
         )
         assert r.data["applied"] is True
 

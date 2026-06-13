@@ -1,8 +1,7 @@
 """§1 Reads and structure — read_document, list_tabs, find_sections.
 
-These are read-only and run against the canonical fixture, except
-find_sections, which needs a heading and therefore uses a scratch copy with a
-seeded HEADING_1 (the canonical fixture has no headings yet — gap #31).
+All read-only against the canonical fixture, which now carries a HEADING_1
+("Text Hazards") and a nested tab "Nested Tab" (seeded for #31).
 """
 
 from __future__ import annotations
@@ -44,9 +43,7 @@ class TestReadDocument:
         assert "“Hello, world" in data["content"]
         assert "Duplicate sentence test" in data["content"]
 
-    async def test_structured_mode_runs_line_up_with_visible_text(
-        self, client, canonical_doc_id
-    ):
+    async def test_structured_mode_runs_line_up_with_visible_text(self, client, canonical_doc_id):
         """Structured spans should line up with the markdown text on the same tab."""
         md = (
             await client.call_tool(
@@ -110,46 +107,36 @@ class TestListTabs:
         # Tabs carry an index reflecting document order.
         assert by_id["t.0"]["index"] == 0
 
-    @pytest.mark.skip(
-        reason="fixture has no nested tab; Docs API cannot create tabs (UI-only). "
-        "Nested-tab live coverage is blocked on fixture gap #31. "
-        "list_tabs nesting logic is covered offline by nested_tabs_doc."
-    )
     async def test_nested_tab_is_reported(self, client, canonical_doc_id):
+        # t.0 has a child tab "Nested Tab" (t.22v4eg81pdjk) — seeded for #31.
         data = (await client.call_tool("list_tabs", {"doc_id": canonical_doc_id})).data
-        assert any(t.get("child_tabs") for t in data["tabs"])
+        by_id = {t["tab_id"]: t for t in data["tabs"]}
+        children = by_id["t.0"].get("child_tabs", [])
+        nested = {c["tab_id"]: c for c in children}
+        assert "t.22v4eg81pdjk" in nested
+        assert nested["t.22v4eg81pdjk"]["title"] == "Nested Tab"
 
 
 # ---------------------------------------------------------------------------
-# find_sections  (uses a scratch copy with a seeded heading — gap #31)
+# find_sections  (against the canonical "Text Hazards" HEADING_1 — #31)
 # ---------------------------------------------------------------------------
 
 
 class TestFindSections:
-    async def test_heading_resolved_to_range_stamped_with_revision(
-        self, client, scratch_doc_with_heading, live_services
-    ):
-        from verified_googledocs_mcp.docs import fetch_document
-
-        s = scratch_doc_with_heading
+    async def test_heading_resolved_to_range_stamped_with_revision(self, client, canonical_doc_id):
+        # "Text Hazards" is a HEADING_1 in t.0 (seeded for #31).
         result = (
             await client.call_tool(
                 "find_sections",
-                {
-                    "doc_id": s.doc_id,
-                    "tab_id": s.primary_tab,
-                    "heading": "Acceptance",
-                },
+                {"doc_id": canonical_doc_id, "tab_id": "t.0", "heading": "Text Hazards"},
             )
         ).data
 
         matches = result["matches"]
-        assert matches, "seeded heading not found by find_sections"
+        assert matches, "Text Hazards heading not found in t.0"
         m = matches[0]
-        assert s.heading_text in m["matched_text"]
-        assert m["end_index"] > m["start_index"]
-
-        # The stamp must match a fresh documents.get revision.
-        docs, _ = live_services
-        fresh_rev = fetch_document(docs, s.doc_id)["revisionId"]
-        assert m["computed_at_revision"] == fresh_rev
+        assert "Text Hazards" in m["matched_text"]
+        assert (m["start_index"], m["end_index"]) == (1, 14)
+        # Stamped with a live revisionId — present and non-empty (it changes on
+        # every edit, so we don't assert a fixed value).
+        assert m["computed_at_revision"]

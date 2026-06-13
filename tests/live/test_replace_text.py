@@ -158,14 +158,10 @@ class TestMatchCountGuard:
         assert after.count("lazy dog") == before.count("lazy dog")
         assert "REPLACED" not in after
 
-    @pytest.mark.xfail(
-        reason="blocked by #28 — fetch_document does not pin suggestionsViewMode, so the "
-        "canonical doc's suggestion makes the duplicate resolve to 1 match (would write). "
-        "Flips to pass once #28 pins PREVIEW_WITHOUT_SUGGESTIONS.",
-        strict=False,
-    )
     async def test_duplicate_sentence_refused_on_canonical(self, client, canonical_doc_id):
-        # dry_run so the canonical fixture is never mutated regardless of outcome.
+        # With #28 fixed (fetch_document pins PREVIEW_WITHOUT_SUGGESTIONS) the
+        # canonical doc's duplicate resolves to 2 matches and the guard fires.
+        # dry_run keeps the canonical fixture unmutated regardless of outcome.
         r = await client.call_tool(
             "replace_text",
             {

@@ -119,7 +119,7 @@ class TestAuditLog:
         assert oct(isolated_audit_dir.parent.stat().st_mode & 0o777) == "0o700"
 
     def test_audit_excerpts_false_redacts_before_after(self, isolated_audit_dir):
-        """The redaction logic itself, exercised directly (it has no tool surface yet — #30)."""
+        """The redaction logic, exercised directly via the audit_excerpts param."""
         from verified_googledocs_mcp.verify import append_audit
 
         logged, reason = append_audit(
@@ -137,14 +137,10 @@ class TestAuditLog:
         assert ev["before"].startswith("[redacted")
         assert ev["after"].startswith("[redacted")
 
-    @pytest.mark.xfail(
-        reason="blocked by #30 — audit_excerpts has no tool/env/config surface, so a live "
-        "mutation cannot request redaction. Flips to pass once #30 exposes the toggle.",
-        strict=False,
-    )
     async def test_audit_excerpts_false_via_env(
         self, client, scratch_doc, isolated_audit_dir, monkeypatch
     ):
+        # #30 wired this env var as the redaction toggle.
         monkeypatch.setenv("VERIFIED_GOOGLEDOCS_MCP_AUDIT_EXCERPTS", "false")
         await client.call_tool(
             "replace_text",
@@ -165,14 +161,8 @@ class TestAuditLog:
 
 
 class TestAuth:
-    @pytest.mark.xfail(
-        reason="blocked by #29 — auth failure raises a bare RuntimeError, not an AUTH_EXPIRED "
-        "envelope. Flips to pass once #29 maps credential failures to AUTH_EXPIRED.",
-        strict=False,
-    )
-    async def test_missing_token_surfaces_auth_expired(
-        self, client, canonical_doc_id, tmp_path
-    ):
+    async def test_missing_token_surfaces_auth_expired(self, client, canonical_doc_id, tmp_path):
+        # #29 maps credential failures to the typed AUTH_EXPIRED envelope.
         # Point the token path at a nonexistent file: get_credentials fails fast.
         with patch(
             "verified_googledocs_mcp.auth._token_path",

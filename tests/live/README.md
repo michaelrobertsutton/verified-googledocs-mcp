@@ -35,10 +35,11 @@ Override the fixture document with `VERIFIED_GOOGLEDOCS_MCP_TEST_DOC=<doc_id>`.
 - **The audit log is isolated.** An autouse fixture points `XDG_STATE_HOME` at a
   per-test tmp dir, so the suite never writes to the real audit log and "one
   line per mutation" can be asserted cleanly.
-- **Three error codes can't occur naturally**, so they use controlled
+- **Two error codes can't occur naturally**, so they use controlled
   simulations where the real API still produces the rejection/re-query:
-  `REVISION_CONFLICT` (stale `requiredRevisionId`), `COMMENT_STILL_OPEN`
-  (stubbed resolve action), and the `AUTH_EXPIRED` path.
+  `REVISION_CONFLICT` (stale `requiredRevisionId`) and `COMMENT_STILL_OPEN`
+  (stubbed resolve action). `AUTH_EXPIRED` is triggered for real by pointing the
+  token path at a missing file.
 
 ## Layout
 
@@ -55,9 +56,9 @@ Override the fixture document with `VERIFIED_GOOGLEDOCS_MCP_TEST_DOC=<doc_id>`.
 
 ## Known divergences
 
-Some assertions are `xfail` against filed follow-up issues — they document
-defects found by this pass and flip to passing once fixed: **#28** (suggestions
-defeat the duplicate-collapse guard), **#29** (AUTH_EXPIRED unwired), **#30**
-(audit_excerpts has no surface), **#36/#37/#38** (markdown-write
-verification/output), **#31** (fixture lacks a heading + nested tab). See
-`docs/acceptance-report.md` for the full matrix.
+Found by this pass and filed as follow-ups. **#28, #29, #30, #31 are fixed**
+(on main / fixture seeded). The remaining `xfail`s document markdown-write
+defects and flip to passing once fixed: **#36** (`to_markdown` omits blank lines
+→ `structural_match` false negatives), **#37** (`append_markdown` fuses into the
+trailing paragraph), **#38** (`insert_image` `inline_object_confirmed` false
+negative). See `docs/acceptance-report.md` for the full matrix.
