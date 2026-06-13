@@ -233,3 +233,47 @@ class TestFindSectionsTool:
                     raise_on_error=False,
                 )
         assert result.is_error
+
+
+class TestAuthExpiredSurfacing:
+    """A credential failure must reach the client as the typed AUTH_EXPIRED
+    envelope — not a masked internal error — for every tool, including the read
+    tools that have no per-tool try/except and the comment tools that acquire
+    credentials directly (issue #29).
+    """
+
+    @staticmethod
+    def _raise_auth_expired() -> None:
+        from verified_googledocs_mcp.verify import ErrorCode, _make_error
+
+        raise _make_error(
+            ErrorCode.AUTH_EXPIRED,
+            "No token found. Run `verified-googledocs-mcp auth` to authorize the server.",
+            {"reason": "no_token"},
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tool_name, args",
+        [
+            ("list_tabs", {"doc_id": "d"}),
+            ("read_document", {"doc_id": "d", "tab_id": "t"}),
+            ("find_sections", {"doc_id": "d", "heading": "h", "tab_id": "t"}),
+            ("list_open_items", {"doc_id": "d"}),
+            ("replace_text", {"doc_id": "d", "tab_id": "t", "find": "x", "replace": "y"}),
+        ],
+    )
+    async def test_auth_failure_surfaces_typed_envelope(
+        self, tool_name: str, args: dict[str, Any]
+    ) -> None:
+        with patch(
+            "verified_googledocs_mcp.server.get_credentials",
+            side_effect=self._raise_auth_expired,
+        ):
+            async with Client(mcp) as client:
+                result = await client.call_tool(tool_name, args, raise_on_error=False)
+        assert result.is_error
+        content_str = str(result.content)
+        assert "AUTH_EXPIRED" in content_str
+        # The retryable flag must survive to the client so callers can re-auth.
+        assert "retryable" in content_str

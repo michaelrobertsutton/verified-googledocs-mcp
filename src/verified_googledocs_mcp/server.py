@@ -252,7 +252,7 @@ def list_open_items(doc_id: str, tab_id: str = "") -> dict[str, Any]:
     document is fetched with suggestionsViewMode=SUGGESTIONS_INLINE so that
     suggestion fields are populated.
     """
-    credentials = get_credentials()
+    credentials = _get_credentials()
     docs_service = build_docs_service(credentials)
     drive_service = build_drive_service(credentials)
 
@@ -300,7 +300,7 @@ def get_comment_thread_tool(doc_id: str, comment_id: str) -> dict[str, Any]:
     Requires both the doc_id (the Google Doc's file ID) and the comment_id
     from the Drive API.
     """
-    credentials = get_credentials()
+    credentials = _get_credentials()
     drive_service = build_drive_service(credentials)
     return get_comment_thread(drive_service, doc_id, comment_id)
 
@@ -332,7 +332,7 @@ def add_anchored_comment(doc_id: str, tab_id: str, quote: str, body: str) -> dic
       INVALID_INPUT    – empty body or quote
       TAB_NOT_FOUND    – tab_id not in document
     """
-    credentials = get_credentials()
+    credentials = _get_credentials()
     docs_service = build_docs_service(credentials)
     drive_service = build_drive_service(credentials)
     try:
@@ -369,7 +369,7 @@ def reply_to_comment(doc_id: str, comment_id: str, body: str) -> dict[str, Any]:
     Errors:
       INVALID_INPUT  – empty body or comment not found
     """
-    credentials = get_credentials()
+    credentials = _get_credentials()
     drive_service = build_drive_service(credentials)
     try:
         return execute_reply_to_comment(
@@ -410,7 +410,7 @@ def resolve_comment(doc_id: str, comment_id: str) -> dict[str, Any]:
       COMMENT_STILL_OPEN  – comment did not resolve; post-state included
       INVALID_INPUT       – comment not found
     """
-    credentials = get_credentials()
+    credentials = _get_credentials()
     drive_service = build_drive_service(credentials)
     try:
         return execute_resolve_comment(
@@ -666,9 +666,26 @@ def diff_tab_vs_file(
 # ---------------------------------------------------------------------------
 
 
+def _get_credentials() -> Any:
+    """Acquire OAuth credentials, surfacing auth failure as a typed envelope.
+
+    ``get_credentials`` raises ``VerifyError(AUTH_EXPIRED)`` when no valid token
+    exists. Convert it to a ``ToolError`` carrying the envelope dict — the exact
+    surfacing path every other typed failure uses — so every tool, including the
+    read tools that have no per-tool try/except, returns the AUTH_EXPIRED
+    envelope rather than a masked internal error.
+    """
+    from fastmcp.exceptions import ToolError
+
+    try:
+        return get_credentials()
+    except VerifyError as exc:
+        raise ToolError(str(exc.envelope.to_dict())) from exc
+
+
 def _get_service() -> Any:
     """Return a Docs API service, failing fast if credentials are missing."""
-    credentials = get_credentials()
+    credentials = _get_credentials()
     return build_docs_service(credentials)
 
 
