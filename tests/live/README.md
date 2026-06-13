@@ -56,9 +56,8 @@ Override the fixture document with `VERIFIED_GOOGLEDOCS_MCP_TEST_DOC=<doc_id>`.
 
 ## Known divergences
 
-Found by this pass and filed as follow-ups. **#28, #29, #30, #31 are fixed**
-(on main / fixture seeded). The remaining `xfail`s document markdown-write
-defects and flip to passing once fixed: **#36** (`to_markdown` omits blank lines
-→ `structural_match` false negatives), **#37** (`append_markdown` fuses into the
-trailing paragraph), **#38** (`insert_image` `inline_object_confirmed` false
-negative). See `docs/acceptance-report.md` for the full matrix.
+Found by this pass and filed as follow-ups. **#28, #29, #30, #31, #36, #37, #38
+are fixed.** One `xfail` remains and flips to passing once fixed: **#43**
+(`replace_range_markdown` `structural_match` re-export slice over-captures
+adjacent paragraphs — the write is correct, only the evidence over-reports). See
+`docs/acceptance-report.md` for the full matrix.
