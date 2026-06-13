@@ -29,6 +29,8 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
+from .verify import ErrorCode, _make_error
+
 SCOPES: list[str] = [
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/drive",
@@ -100,15 +102,20 @@ def run_auth_flow() -> None:
 def get_credentials() -> Credentials:
     """Return valid OAuth credentials, refreshing the token if needed.
 
-    Raises RuntimeError with a clear "run `verified-googledocs-mcp auth` first" message
-    when no valid token exists. The server calls this before any tool runs;
-    failure here is fast and diagnosed rather than a silent 401 later.
+    Raises VerifyError(AUTH_EXPIRED) — a typed, retryable error envelope — with a
+    clear "run `verified-googledocs-mcp auth`" message when no valid token exists,
+    a refresh fails, or the stored token is unusable. The diagnostics carry a
+    machine-readable ``reason`` (no_token / refresh_failed / invalid_token). The
+    server converts this envelope to a ToolError so every tool fails fast with
+    AUTH_EXPIRED rather than a silent 401 later or a bare RuntimeError.
     """
     token_path = _token_path()
     if not token_path.exists():
-        raise RuntimeError(
+        raise _make_error(
+            ErrorCode.AUTH_EXPIRED,
             "No token found. Run `verified-googledocs-mcp auth` to authorize the server, "
-            f"then retry. (Expected token at {token_path})"
+            f"then retry. (Expected token at {token_path})",
+            {"reason": "no_token", "token_path": str(token_path)},
         )
 
     credentials = Credentials.from_authorized_user_file(str(token_path), SCOPES)
@@ -118,15 +125,19 @@ def get_credentials() -> Credentials:
             try:
                 credentials.refresh(Request())
             except RefreshError as exc:
-                raise RuntimeError(
+                raise _make_error(
+                    ErrorCode.AUTH_EXPIRED,
                     "Token refresh failed. Run `verified-googledocs-mcp auth` to re-authorize. "
-                    f"(Detail: {exc})"
+                    f"(Detail: {exc})",
+                    {"reason": "refresh_failed", "detail": str(exc)},
                 ) from exc
             # Persist the refreshed token (owner-only permissions).
             _write_token(token_path, credentials.to_json())
         else:
-            raise RuntimeError(
-                "Stored token is invalid. Run `verified-googledocs-mcp auth` to re-authorize."
+            raise _make_error(
+                ErrorCode.AUTH_EXPIRED,
+                "Stored token is invalid. Run `verified-googledocs-mcp auth` to re-authorize.",
+                {"reason": "invalid_token"},
             )
 
     return credentials

@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from verified_googledocs_mcp import auth as auth_module
+from verified_googledocs_mcp.verify import ErrorCode, VerifyError
 
 
 @pytest.fixture()
@@ -30,11 +31,15 @@ def tmp_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 class TestGetCredentials:
     def test_raises_when_no_token(self, tmp_config: Path) -> None:
-        with pytest.raises(RuntimeError, match="verified-googledocs-mcp auth"):
+        with pytest.raises(VerifyError, match="verified-googledocs-mcp auth") as exc_info:
             auth_module.get_credentials()
+        env = exc_info.value.envelope
+        assert env.error_code is ErrorCode.AUTH_EXPIRED
+        assert env.retryable is True
+        assert env.diagnostics["reason"] == "no_token"
 
     def test_raises_message_names_token_path(self, tmp_config: Path) -> None:
-        with pytest.raises(RuntimeError, match="token.json"):
+        with pytest.raises(VerifyError, match="token.json"):
             auth_module.get_credentials()
 
     def test_valid_token_returned(self, tmp_config: Path) -> None:
@@ -92,8 +97,11 @@ class TestGetCredentials:
             patch("verified_googledocs_mcp.auth.Request"),
         ):
             mock_creds_cls.from_authorized_user_file.return_value = mock_creds
-            with pytest.raises(RuntimeError, match="verified-googledocs-mcp auth"):
+            with pytest.raises(VerifyError, match="verified-googledocs-mcp auth") as exc_info:
                 auth_module.get_credentials()
+        env = exc_info.value.envelope
+        assert env.error_code is ErrorCode.AUTH_EXPIRED
+        assert env.diagnostics["reason"] == "refresh_failed"
 
     def test_invalid_token_no_refresh_token_raises(self, tmp_config: Path) -> None:
         mock_creds = MagicMock()
@@ -106,8 +114,11 @@ class TestGetCredentials:
 
         with patch("verified_googledocs_mcp.auth.Credentials") as mock_creds_cls:
             mock_creds_cls.from_authorized_user_file.return_value = mock_creds
-            with pytest.raises(RuntimeError, match="verified-googledocs-mcp auth"):
+            with pytest.raises(VerifyError, match="verified-googledocs-mcp auth") as exc_info:
                 auth_module.get_credentials()
+        env = exc_info.value.envelope
+        assert env.error_code is ErrorCode.AUTH_EXPIRED
+        assert env.diagnostics["reason"] == "invalid_token"
 
 
 class TestRunAuthFlow:
