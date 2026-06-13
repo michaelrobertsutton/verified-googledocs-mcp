@@ -31,6 +31,10 @@ MUTATING_TOOLS: frozenset[str] = frozenset(
         "add_anchored_comment",
         "reply_to_comment",
         "resolve_comment",
+        "replace_range_markdown",
+        "replace_tab_markdown",
+        "append_markdown",
+        "insert_image",
     }
 )
 

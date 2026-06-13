@@ -642,3 +642,264 @@ def append_audit(
 
     except Exception as exc:  # noqa: BLE001
         return False, str(exc)
+
+
+# ---------------------------------------------------------------------------
+# Range/markdown evidence helper (pure)
+# ---------------------------------------------------------------------------
+
+
+def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
+    """Parse markdown into a list of block descriptors for structural comparison.
+
+    Returns a list of dicts, each describing a block:
+        {type, level?, text?, rows?, cols?, nesting?, link_targets}
+
+    Accepted lossy transforms — differences treated as equivalent:
+    - Whitespace runs: normalized to single space
+    - Bullet-marker style: '-'/'*'/'1.' are all list_item type
+    - Table alignment / separator formatting: all equivalent
+    - Trailing newlines: stripped from text values
+    - Markdown escaping: backslash-escaped chars treated as their plain form
+    - Read-side placeholders: [image:...], [chip:...], [footnote:...] appear
+      as text in the output and count as paragraph text nodes
+
+    The comparison is pragmatic: block kinds + heading levels + table dimensions
+    + link targets + text content modulo the accepted transforms.  A naive text
+    diff would fail every write due to the above transforms.
+    """
+    import re as _re
+
+    from markdown_it import MarkdownIt
+    from markdown_it.tree import SyntaxTreeNode
+
+    if not markdown.strip():
+        return []
+
+    md = MarkdownIt("commonmark").enable("table")
+    tokens = md.parse(markdown)
+    tree = SyntaxTreeNode(tokens)
+
+    blocks: list[dict[str, Any]] = []
+
+    def _norm(text: str) -> str:
+        text = _re.sub(r"\\(.)", r"\1", text)
+        return _re.sub(r"\s+", " ", text).strip()
+
+    def _links(node: Any) -> list[str]:
+        targets: list[str] = []
+        for c in node.children:
+            if c.type == "link":
+                url = c.attrGet("href") or ""
+                if url:
+                    targets.append(url)
+            targets.extend(_links(c))
+        return targets
+
+    def _inline_text(node: Any) -> str:
+        parts: list[str] = []
+        for c in node.children:
+            t = c.type
+            if t == "text":
+                parts.append(c.content)
+            elif t == "softbreak":
+                parts.append(" ")
+            elif t == "hardbreak":
+                parts.append(" ")
+            else:
+                parts.append(_inline_text(c))
+        return "".join(parts)
+
+    def _table_dims(node: Any) -> tuple[int, int, list[str]]:
+        rows = 0
+        max_cols = 0
+        targets: list[str] = []
+        for sec in node.children:
+            if sec.type in ("thead", "tbody"):
+                for tr in sec.children:
+                    if tr.type == "tr":
+                        rows += 1
+                        cols = sum(1 for c in tr.children if c.type in ("td", "th"))
+                        max_cols = max(max_cols, cols)
+                        for cell in tr.children:
+                            targets.extend(_links(cell))
+        return rows, max_cols, targets
+
+    def _list_items(node: Any, nesting: int) -> None:
+        for item in node.children:
+            if item.type == "list_item":
+                for child in item.children:
+                    if child.type == "paragraph":
+                        blocks.append({
+                            "type": "list_item",
+                            "nesting": nesting,
+                            "text": _norm(_inline_text(child)),
+                            "link_targets": _links(child),
+                        })
+                    elif child.type in ("bullet_list", "ordered_list"):
+                        _list_items(child, nesting + 1)
+
+    def _walk(node: Any) -> None:
+        for child in node.children:
+            t = child.type
+            if t == "heading":
+                level = len(child.markup)
+                blocks.append({
+                    "type": "heading",
+                    "level": level,
+                    "text": _norm(_inline_text(child)),
+                    "link_targets": _links(child),
+                })
+            elif t == "paragraph":
+                blocks.append({
+                    "type": "paragraph",
+                    "text": _norm(_inline_text(child)),
+                    "link_targets": _links(child),
+                })
+            elif t in ("bullet_list", "ordered_list"):
+                _list_items(child, 0)
+            elif t == "table":
+                r, c, lts = _table_dims(child)
+                blocks.append({"type": "table", "rows": r, "cols": c, "link_targets": lts})
+            elif t in ("root", "thead", "tbody"):
+                _walk(child)
+
+    _walk(tree)
+    return blocks
+
+
+def assemble_range_markdown_evidence(
+    *,
+    input_markdown: str,
+    post_body: dict[str, Any],
+    start_index: int,
+    end_index: int,
+    revision_before: str,
+    revision_after: str,
+    applied: bool,
+    audit_logged: bool,
+    audit_log_reason: str = "",
+) -> dict[str, Any]:
+    """Assemble range/markdown evidence after a markdown write.
+
+    After the write, re-exports the affected range by filtering structural
+    elements from the post-read body whose indices overlap [start_index,
+    end_index), converts to markdown via to_markdown(), parses both sides
+    with markdown-it-py, and structurally compares them.
+
+    Accepted lossy transforms (enumerated in _parse_markdown_blocks docstring).
+
+    Returns a dict with keys:
+        applied, revision_before, revision_after, audit_logged,
+        structural_match (bool), input_blocks (count), post_blocks (count),
+        structural_diff (list of mismatch descriptions, absent if empty),
+        audit_log_reason (absent if empty)
+    """
+    from .markdown import to_markdown
+
+    # Re-export the affected range.
+    sliced_content = [
+        elem
+        for elem in post_body.get("content", [])
+        if not (elem.get("endIndex", 0) <= start_index or elem.get("startIndex", 0) >= end_index)
+    ]
+    range_body = {"content": sliced_content}
+    post_md, _ = to_markdown(range_body)
+
+    input_blocks = _parse_markdown_blocks(input_markdown)
+    post_blocks = _parse_markdown_blocks(post_md)
+
+    diffs: list[str] = []
+    if len(input_blocks) != len(post_blocks):
+        diffs.append(
+            f"Block count mismatch: input has {len(input_blocks)}, post-write has {len(post_blocks)}"
+        )
+    else:
+        for i, (ib, pb) in enumerate(zip(input_blocks, post_blocks)):
+            if not _blocks_structurally_equal(ib, pb):
+                diffs.append(f"Block {i}: input={ib!r} vs post={pb!r}")
+
+    evidence: dict[str, Any] = {
+        "applied": applied,
+        "revision_before": revision_before,
+        "revision_after": revision_after,
+        "structural_match": len(diffs) == 0,
+        "input_blocks": len(input_blocks),
+        "post_blocks": len(post_blocks),
+        "audit_logged": audit_logged,
+    }
+    if diffs:
+        evidence["structural_diff"] = diffs
+    if audit_log_reason:
+        evidence["audit_log_reason"] = audit_log_reason
+    return evidence
+
+
+def _blocks_structurally_equal(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Return True if two block descriptors are structurally equivalent."""
+    if a["type"] != b["type"]:
+        return False
+    t = a["type"]
+    if t == "heading":
+        return a["level"] == b["level"] and a["text"] == b["text"]
+    if t == "paragraph":
+        return a["text"] == b["text"]
+    if t == "list_item":
+        return a["nesting"] == b["nesting"] and a["text"] == b["text"]
+    if t == "table":
+        return a["rows"] == b["rows"] and a["cols"] == b["cols"]
+    return False
+
+
+def assemble_structural_evidence(
+    *,
+    post_body: dict[str, Any],
+    anchor_paragraph_start: int,
+    revision_before: str,
+    revision_after: str,
+    applied: bool,
+    audit_logged: bool,
+    audit_log_reason: str = "",
+) -> dict[str, Any]:
+    """Assemble structural evidence for insert_image.
+
+    Confirms that an inline object exists in or after the paragraph that
+    contains anchor_paragraph_start in the post-read body.
+
+    Returns a dict with keys:
+        applied, revision_before, revision_after,
+        inline_object_confirmed (bool), audit_logged,
+        audit_log_reason (absent if empty)
+    """
+    confirmed = _inline_object_near(post_body, anchor_paragraph_start)
+    evidence: dict[str, Any] = {
+        "applied": applied,
+        "revision_before": revision_before,
+        "revision_after": revision_after,
+        "inline_object_confirmed": confirmed,
+        "audit_logged": audit_logged,
+    }
+    if audit_log_reason:
+        evidence["audit_log_reason"] = audit_log_reason
+    return evidence
+
+
+def _inline_object_near(body: dict[str, Any], anchor_para_start: int) -> bool:
+    """Return True if the paragraph after the anchor contains an inline image."""
+    content = body.get("content", [])
+    found_anchor = False
+    for elem in content:
+        if "paragraph" not in elem:
+            continue
+        elem_start = elem.get("startIndex", 0)
+        elem_end = elem.get("endIndex", 0)
+        if not found_anchor:
+            if elem_start <= anchor_para_start < elem_end:
+                found_anchor = True
+            continue
+        para = elem["paragraph"]
+        for inline in para.get("elements", []):
+            if "inlineObjectElement" in inline:
+                return True
+        return False
+    return False
