@@ -137,18 +137,18 @@ def execute_replace_text(
 
     # --- Dry run -----------------------------------------------------------
     if dry_run:
-        # Build the predicted post-read by simple string substitution in the
-        # pre-tab text (excerpt only; no real write).
-        # Assemble evidence with applied=False.
+        # No write is issued; the "after" excerpt is the predicted diff,
+        # computed by splicing `replace` into the pre-read at the located spans.
         evidence = assemble_text_edit_evidence(
             locate_result=locate_result,
             pre_tab_json=pre_tab_json,
-            post_tab_json=pre_tab_json,  # no real post-read; excerpt from pre
+            post_tab_json=pre_tab_json,  # unused when predicted_replacement is set
             revision_before=revision_before,
             revision_after="",  # unknown; write not issued
             applied=False,
             audit_logged=False,
             audit_log_reason="dry_run",
+            predicted_replacement=replace,
         )
         # Record the dry-run in the audit log (best-effort; applied=False).
         audit_ok, audit_reason = append_audit(
@@ -186,13 +186,6 @@ def execute_replace_text(
     post_tab_json: dict[str, Any] = {"body": post_body} if post_body is not None else {"body": {}}
 
     # --- Assemble evidence -------------------------------------------------
-    audit_ok, audit_reason = append_audit(
-        doc=doc_id,
-        tab=tab_id,
-        tool="replace_text",
-        evidence={},  # placeholder; real evidence assembled below
-    )
-
     evidence = assemble_text_edit_evidence(
         locate_result=locate_result,
         pre_tab_json=pre_tab_json,
@@ -200,19 +193,20 @@ def execute_replace_text(
         revision_before=revision_before,
         revision_after=revision_after,
         applied=True,
-        audit_logged=audit_ok,
-        audit_log_reason="" if audit_ok else audit_reason,
+        audit_logged=True,  # provisional; corrected from the append result below
+        audit_log_reason="",
     )
 
-    # Re-log with the full evidence (best-effort; failure embedded in evidence).
-    audit_ok2, audit_reason2 = append_audit(
+    # One audit line per mutation, written from the full evidence (best-effort;
+    # an append failure is recorded in the evidence, never raised).
+    audit_ok, audit_reason = append_audit(
         doc=doc_id,
         tab=tab_id,
         tool="replace_text",
         evidence=evidence,
     )
-    evidence["audit_logged"] = audit_ok2
-    if not audit_ok2:
-        evidence["audit_log_reason"] = audit_reason2
+    evidence["audit_logged"] = audit_ok
+    if not audit_ok:
+        evidence["audit_log_reason"] = audit_reason
 
     return evidence

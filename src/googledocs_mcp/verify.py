@@ -524,12 +524,18 @@ def assemble_text_edit_evidence(
     applied: bool,
     audit_logged: bool,
     audit_log_reason: str = "",
+    predicted_replacement: str | None = None,
 ) -> dict[str, Any]:
     """Assemble the text-edit evidence dict from pre/post tab JSON.
 
-    Called by the ``replace_text`` tool after a successful write (or in dry-run
-    mode with applied=False).  Callers pass pre-read and post-read tab JSON;
+    Called by the ``replace_text`` tool after a successful write, or in dry-run
+    mode with applied=False.  Callers pass pre-read and post-read tab JSON;
     this function is pure (no I/O).
+
+    For a real write the "after" excerpt is read from ``post_tab_json``.  In
+    dry-run mode the write has not happened, so the caller passes
+    ``predicted_replacement`` and the "after" excerpt is computed by splicing
+    that text into the pre-read at every located span — the predicted diff.
 
     Returns a dict with keys:
         applied, match_count, rung, before, after,
@@ -543,11 +549,27 @@ def assemble_text_edit_evidence(
     cp_end = _u16_to_codepoint(first_span[1], pre_u16_map)
     before_excerpt = _excerpt(pre_text, cp_start, cp_end)
 
-    # For the "after" excerpt we use the post-read text at the same code-point
-    # window.  Everything *before* the edited span is unshifted (descending-
-    # order writes guarantee this), so cp_start is stable.
-    post_text, _, _ = _flatten_tab(post_tab_json)
-    after_excerpt = _excerpt(post_text, cp_start, cp_start)  # span collapsed post-edit
+    if predicted_replacement is not None:
+        # Dry run: splice the replacement into the pre-read text at every span
+        # (descending code-point order so earlier offsets stay valid), then
+        # excerpt around the first match to show what the edit would produce.
+        spans_cp = sorted(
+            (
+                (_u16_to_codepoint(s, pre_u16_map), _u16_to_codepoint(e, pre_u16_map))
+                for s, e in locate_result.spans
+            ),
+            reverse=True,
+        )
+        predicted_text = pre_text
+        for s, e in spans_cp:
+            predicted_text = predicted_text[:s] + predicted_replacement + predicted_text[e:]
+        after_excerpt = _excerpt(predicted_text, cp_start, cp_start + len(predicted_replacement))
+    else:
+        # Real write: read the "after" excerpt from the post-read at the same
+        # window.  Everything *before* the edited span is unshifted (descending-
+        # order writes guarantee this), so cp_start is stable.
+        post_text, _, _ = _flatten_tab(post_tab_json)
+        after_excerpt = _excerpt(post_text, cp_start, cp_start)  # span collapsed post-edit
 
     evidence: dict[str, Any] = {
         "applied": applied,

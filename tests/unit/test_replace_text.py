@@ -8,6 +8,8 @@ with different revisionIds.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -544,3 +546,68 @@ class TestReplaceTextUtf16:
         start_idx = delete_req["deleteContentRange"]["range"]["startIndex"]
         # body starts at 1; emoji = 2 UTF-16 units; "Hello " = 6 chars; "world" starts at 1+2+6=9
         assert start_idx == 9, f"Expected 9 but got {start_idx}"
+
+
+# ---------------------------------------------------------------------------
+# Dry-run predicted diff
+# ---------------------------------------------------------------------------
+
+
+class TestReplaceTextDryRunDiff:
+    @pytest.mark.asyncio
+    async def test_dry_run_after_shows_predicted_replacement(self) -> None:
+        """Dry-run 'after' must show the predicted text, not the unchanged text."""
+        p1, p2, p3, p4, mock_service = _mock_replace_simple("Hello world", "unused")
+        with p1, p2, p3, p4:
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "replace_text",
+                    {
+                        "doc_id": "doc-test",
+                        "tab_id": "tab-1",
+                        "find": "world",
+                        "replace": "planet",
+                        "dry_run": True,
+                    },
+                )
+        assert mock_service.documents().batchUpdate.call_count == 0
+        assert result.data["applied"] is False
+        assert "world" in result.data["before"]
+        # The predicted diff must reflect the replacement, and differ from before.
+        assert "planet" in result.data["after"]
+        assert result.data["after"] != result.data["before"]
+
+
+# ---------------------------------------------------------------------------
+# Audit trail: exactly one line per mutation
+# ---------------------------------------------------------------------------
+
+
+class TestReplaceTextAuditTrail:
+    @pytest.mark.asyncio
+    async def test_one_audit_line_per_replace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A successful replace writes exactly one audit record, with full evidence."""
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        p1, p2, p3, p4, _ = _mock_replace_simple("Hello world", "Hello planet")
+        with p1, p2, p3, p4:
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "replace_text",
+                    {
+                        "doc_id": "doc-test",
+                        "tab_id": "tab-1",
+                        "find": "world",
+                        "replace": "planet",
+                    },
+                )
+        assert result.data["audit_logged"] is True
+        audit_file = tmp_path / "googledocs-mcp" / "audit.jsonl"
+        assert audit_file.exists()
+        lines = [ln for ln in audit_file.read_text().splitlines() if ln.strip()]
+        assert len(lines) == 1, f"expected one audit line, got {len(lines)}"
+        record = json.loads(lines[0])
+        assert record["tool"] == "replace_text"
+        assert record["evidence"]["applied"] is True
+        assert record["evidence"]["match_count"] == 1
