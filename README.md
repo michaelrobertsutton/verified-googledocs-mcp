@@ -136,6 +136,14 @@ Then register the server with your MCP client. Most clients use the standard `mc
 
 The server uses the `documents` and `drive` scopes (comments require Drive). The credentials path is overridable with `VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS`.
 
+## Security and permissions
+
+This is a single-user, local server. It runs as you, over stdio, launched by your MCP client; there is no network listener, no hosted service, and no shared credentials. It acts entirely with your own Google authority.
+
+- **Scopes.** It requests `documents` and `drive`. The full `drive` scope is broader than editing alone needs, but the comment and suggestion tools (listing, replying to, and resolving comments on documents you already have) operate through the Drive API on arbitrary existing files, which the narrower `drive.file` scope cannot reach. `drive` is the minimum that covers the full tool set; if you don't need the comment tools, a fork could drop to a narrower scope.
+- **Credentials at rest.** The OAuth client secret lives at `~/.config/verified-googledocs-mcp/credentials.json`; the cached token (including the refresh token) is written to `~/.config/verified-googledocs-mcp/token.json` with owner-only permissions (`0600`, under a `0700` directory). Treat both as secrets: a leaked refresh token grants your full `drive`+`documents` access until you revoke it in your Google Account's security settings. Neither file is ever committed (both are gitignored).
+- **Audit log.** Every mutation appends to `~/.local/state/verified-googledocs-mcp/audit.jsonl`, also `0600`. It records document content excerpts; pass `audit_excerpts=false` to log evidence metadata without the content.
+
 ## Error codes
 
 Failures return a typed envelope (`error_code`, `message`, `diagnostics`, `retryable`):
