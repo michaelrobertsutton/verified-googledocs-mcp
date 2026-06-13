@@ -84,6 +84,57 @@ class TestLists:
         assert "- Second item" in md
 
 
+def _normal_para(text: str) -> dict:
+    return {
+        "paragraph": {
+            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            "elements": [{"textRun": {"content": text + "\n"}}],
+        }
+    }
+
+
+def _bullet_para(text: str) -> dict:
+    return {
+        "paragraph": {
+            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            "bullet": {"listId": "list-1"},
+            "elements": [{"textRun": {"content": text + "\n"}}],
+        }
+    }
+
+
+class TestBlockSeparation:
+    """Regression for #36: block-level elements need a blank line between them."""
+
+    def test_consecutive_paragraphs_separated_by_blank_line(self) -> None:
+        # A single newline between two paragraphs is a soft break that re-parses
+        # as one paragraph; they must be separated by a blank line instead.
+        body = {"content": [_normal_para("First paragraph"), _normal_para("Second paragraph")]}
+        md, _ = to_markdown(body)
+        assert md == "First paragraph\n\nSecond paragraph\n"
+
+    def test_paragraph_after_heading_separated_by_blank_line(self) -> None:
+        body = {
+            "content": [
+                {
+                    "paragraph": {
+                        "paragraphStyle": {"namedStyleType": "HEADING_1"},
+                        "elements": [{"textRun": {"content": "Title\n"}}],
+                    }
+                },
+                _normal_para("Body text"),
+            ]
+        }
+        md, _ = to_markdown(body)
+        assert md == "# Title\n\nBody text\n"
+
+    def test_consecutive_list_items_stay_tight(self) -> None:
+        # Items within one list must NOT gain blank lines between them.
+        body = {"content": [_bullet_para("First item"), _bullet_para("Second item")]}
+        md, _ = to_markdown(body)
+        assert md == "- First item\n- Second item\n"
+
+
 class TestTables:
     def test_table_renders_pipe_format(self) -> None:
         doc = multi_tab_doc()

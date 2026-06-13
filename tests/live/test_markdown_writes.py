@@ -72,11 +72,6 @@ class TestReplaceRangeMarkdown:
         # The new heading content landed in the document.
         assert "Renamed Heading" in await _read(client, scratch_doc.doc_id, scratch_doc.primary_tab)
 
-    @pytest.mark.xfail(
-        reason="#36 — to_markdown omits blank lines between blocks, so the re-export "
-        "structural comparison false-negatives. The write is correct; the evidence flag is not.",
-        strict=False,
-    )
     async def test_range_replace_structural_match_evidence(self, client, scratch_doc):
         r = await _range_replace(client, scratch_doc)
         assert r.data["structural_match"] is True
@@ -150,11 +145,6 @@ class TestReplaceTabMarkdown:
         # Old hazard content is gone.
         assert "Duplicate sentence test" not in content
 
-    @pytest.mark.xfail(
-        reason="#36 — to_markdown omits blank lines, so the re-export collapses consecutive "
-        "paragraphs and structural_match false-negatives. The document is written correctly.",
-        strict=False,
-    )
     async def test_whole_tab_replace_structural_match_evidence(self, client, scratch_doc):
         r = await client.call_tool(
             "replace_tab_markdown",
