@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  lint-and-test:
+  lint-and-typecheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,5 +21,28 @@ jobs:
       - name: Lint
         run: uv run --extra dev ruff check src tests
 
+      - name: Format check
+        run: uv run --extra dev ruff format --check src tests
+
+      - name: Type check
+        run: uv run --extra dev mypy src
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
       - name: Test
-        run: uv run --extra dev pytest -q
+        run: uv run --python ${{ matrix.python-version }} --extra dev pytest -q --cov-fail-under=90

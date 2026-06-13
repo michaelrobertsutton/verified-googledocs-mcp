@@ -1,6 +1,7 @@
 # verified-googledocs-mcp
 
 [![CI](https://github.com/michaelrobertsutton/verified-googledocs-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/michaelrobertsutton/verified-googledocs-mcp/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen.svg)](pyproject.toml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -201,8 +202,10 @@ Failures return a typed envelope (`error_code`, `message`, `diagnostics`, `retry
 ## Development
 
 ```bash
-uv run --extra dev pytest        # unit tests: no network, no credentials
-uv run --extra dev ruff check .  # lint
+uv run --extra dev pytest                 # unit tests (offline) + coverage
+uv run --extra dev ruff check src tests   # lint
+uv run --extra dev ruff format src tests  # format
+uv run --extra dev mypy src               # type check
 ```
 
 Unit tests run against synthetic Docs API fixtures and an in-memory MCP client, so the full suite is offline. A small live smoke suite (under `tests/live/`) exercises a real scratch document and needs credentials.
