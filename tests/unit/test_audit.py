@@ -230,3 +230,34 @@ class TestAuditFailurePolicy:
         # Caller pattern: evidence["audit_logged"] = ok; evidence["audit_fail_reason"] = reason
         assert ok is False
         assert isinstance(reason, str)
+
+
+# ---------------------------------------------------------------------------
+# File permissions: the audit log records document excerpts; keep it owner-only
+# ---------------------------------------------------------------------------
+
+
+class TestAuditPermissions:
+    def test_audit_file_is_owner_only(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        append_audit(doc="d", tab="t", tool="replace_text", evidence={"before": "a", "after": "b"})
+        audit_file = tmp_path / "verified-googledocs-mcp" / "audit.jsonl"
+        mode = stat.S_IMODE(audit_file.stat().st_mode)
+        assert mode == 0o600, f"audit log mode is {oct(mode)}, expected 0o600"
+
+    def test_state_dir_is_owner_only(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        append_audit(doc="d", tab="t", tool="replace_text", evidence={"before": "a", "after": "b"})
+        state_dir = tmp_path / "verified-googledocs-mcp"
+        mode = stat.S_IMODE(state_dir.stat().st_mode)
+        assert mode == 0o700, f"state dir mode is {oct(mode)}, expected 0o700"
+
+    def test_tightens_preexisting_loose_file(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        state_dir = tmp_path / "verified-googledocs-mcp"
+        state_dir.mkdir(parents=True)
+        loose = state_dir / "audit.jsonl"
+        loose.write_text("")
+        os.chmod(loose, 0o644)
+        append_audit(doc="d", tab="t", tool="replace_text", evidence={"before": "a", "after": "b"})
+        assert stat.S_IMODE(loose.stat().st_mode) == 0o600

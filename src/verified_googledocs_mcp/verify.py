@@ -618,7 +618,8 @@ def append_audit(
     """
     try:
         state_dir = _state_dir()
-        state_dir.mkdir(parents=True, exist_ok=True)
+        # The audit log records document content excerpts; keep it owner-only.
+        state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         audit_path = state_dir / "audit.jsonl"
 
         payload = evidence.copy()
@@ -635,8 +636,12 @@ def append_audit(
             "evidence": payload,
         }
 
-        with audit_path.open("a", encoding="utf-8") as fh:
+        # Open append-only, creating with owner-only perms; chmod each time so a
+        # pre-existing loose-permission file is also tightened. Volume is low.
+        fd = os.open(audit_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        os.chmod(audit_path, 0o600)
 
         return True, ""
 

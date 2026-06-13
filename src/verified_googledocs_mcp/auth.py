@@ -50,6 +50,28 @@ def _token_path() -> Path:
     return _DEFAULT_TOKEN
 
 
+def _write_token(token_path: Path, data: str) -> None:
+    """Write the cached token with owner-only permissions.
+
+    The token file holds a long-lived OAuth refresh token, so it must not be
+    readable by other local users. The parent directory is created 0o700 and
+    the file is written atomically (temp file chmod 0o600, then renamed) so it
+    is never briefly world-readable and a pre-existing loose-permission file is
+    replaced rather than appended to.
+    """
+    token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = token_path.with_name(token_path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(data)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    os.replace(tmp, token_path)
+    os.chmod(token_path, 0o600)
+
+
 def run_auth_flow() -> None:
     """Run the installed-app OAuth flow and cache the resulting token.
 
@@ -71,8 +93,7 @@ def run_auth_flow() -> None:
     credentials = flow.run_local_server(port=0)
 
     token_path = _token_path()
-    token_path.parent.mkdir(parents=True, exist_ok=True)
-    token_path.write_text(credentials.to_json())
+    _write_token(token_path, credentials.to_json())
     print(f"Token saved to {token_path}")
 
 
@@ -101,8 +122,8 @@ def get_credentials() -> Credentials:
                     "Token refresh failed. Run `verified-googledocs-mcp auth` to re-authorize. "
                     f"(Detail: {exc})"
                 ) from exc
-            # Persist the refreshed token.
-            token_path.write_text(credentials.to_json())
+            # Persist the refreshed token (owner-only permissions).
+            _write_token(token_path, credentials.to_json())
         else:
             raise RuntimeError(
                 "Stored token is invalid. Run `verified-googledocs-mcp auth` to re-authorize."
