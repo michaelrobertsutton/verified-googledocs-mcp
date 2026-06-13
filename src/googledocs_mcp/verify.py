@@ -481,6 +481,112 @@ def locate(
 
 
 # ---------------------------------------------------------------------------
+# Text-edit evidence helper
+# ---------------------------------------------------------------------------
+
+_EXCERPT_RADIUS = 200  # characters on each side of the edited span
+
+
+def _u16_to_codepoint(api_index: int, u16_map: list[int]) -> int:
+    """Return the code-point offset in the flattened text for a UTF-16 API index.
+
+    u16_map[i] holds the UTF-16 index of code-point i.  We want the inverse:
+    given a UTF-16 index, which code-point position is it?
+
+    Uses a linear scan; for typical excerpt ranges (<400 chars) this is fast.
+    Falls back to the end of the text if api_index is past the sentinel.
+    """
+    for cp_idx, u16_idx in enumerate(u16_map[:-1]):  # exclude sentinel
+        if u16_idx >= api_index:
+            return cp_idx
+    return len(u16_map) - 1
+
+
+def _excerpt(
+    text: str,
+    cp_start: int,
+    cp_end: int,
+    radius: int = _EXCERPT_RADIUS,
+) -> str:
+    """Return ±radius characters around the [cp_start, cp_end) span."""
+    lo = max(0, cp_start - radius)
+    hi = min(len(text), cp_end + radius)
+    return text[lo:hi]
+
+
+def assemble_text_edit_evidence(
+    *,
+    locate_result: "LocateResult",
+    pre_tab_json: dict[str, Any],
+    post_tab_json: dict[str, Any],
+    revision_before: str,
+    revision_after: str,
+    applied: bool,
+    audit_logged: bool,
+    audit_log_reason: str = "",
+    predicted_replacement: str | None = None,
+) -> dict[str, Any]:
+    """Assemble the text-edit evidence dict from pre/post tab JSON.
+
+    Called by the ``replace_text`` tool after a successful write, or in dry-run
+    mode with applied=False.  Callers pass pre-read and post-read tab JSON;
+    this function is pure (no I/O).
+
+    For a real write the "after" excerpt is read from ``post_tab_json``.  In
+    dry-run mode the write has not happened, so the caller passes
+    ``predicted_replacement`` and the "after" excerpt is computed by splicing
+    that text into the pre-read at every located span — the predicted diff.
+
+    Returns a dict with keys:
+        applied, match_count, rung, before, after,
+        revision_before, revision_after,
+        audit_logged, audit_log_reason (empty on success)
+    """
+    # Extract the excerpt from pre-read using the first span.
+    pre_text, pre_u16_map, _ = _flatten_tab(pre_tab_json)
+    first_span = locate_result.spans[0]
+    cp_start = _u16_to_codepoint(first_span[0], pre_u16_map)
+    cp_end = _u16_to_codepoint(first_span[1], pre_u16_map)
+    before_excerpt = _excerpt(pre_text, cp_start, cp_end)
+
+    if predicted_replacement is not None:
+        # Dry run: splice the replacement into the pre-read text at every span
+        # (descending code-point order so earlier offsets stay valid), then
+        # excerpt around the first match to show what the edit would produce.
+        spans_cp = sorted(
+            (
+                (_u16_to_codepoint(s, pre_u16_map), _u16_to_codepoint(e, pre_u16_map))
+                for s, e in locate_result.spans
+            ),
+            reverse=True,
+        )
+        predicted_text = pre_text
+        for s, e in spans_cp:
+            predicted_text = predicted_text[:s] + predicted_replacement + predicted_text[e:]
+        after_excerpt = _excerpt(predicted_text, cp_start, cp_start + len(predicted_replacement))
+    else:
+        # Real write: read the "after" excerpt from the post-read at the same
+        # window.  Everything *before* the edited span is unshifted (descending-
+        # order writes guarantee this), so cp_start is stable.
+        post_text, _, _ = _flatten_tab(post_tab_json)
+        after_excerpt = _excerpt(post_text, cp_start, cp_start)  # span collapsed post-edit
+
+    evidence: dict[str, Any] = {
+        "applied": applied,
+        "match_count": locate_result.match_count,
+        "rung": locate_result.rung,
+        "before": before_excerpt,
+        "after": after_excerpt,
+        "revision_before": revision_before,
+        "revision_after": revision_after,
+        "audit_logged": audit_logged,
+    }
+    if audit_log_reason:
+        evidence["audit_log_reason"] = audit_log_reason
+    return evidence
+
+
+# ---------------------------------------------------------------------------
 # Audit writer
 # ---------------------------------------------------------------------------
 
