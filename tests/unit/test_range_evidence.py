@@ -333,6 +333,33 @@ class TestAssembleRangeMarkdownEvidence:
         )
         assert ev["structural_match"] is True
 
+    def test_consecutive_paragraphs_match_across_roundtrip(self) -> None:
+        # Regression for #36: the re-export joined consecutive paragraphs with a
+        # single newline, so markdown-it merged them into one paragraph and the
+        # block count came up short (input 3, post 2) — a false negative. The
+        # body and the input are structurally identical, so this must match.
+        post = _body(
+            _heading_para(1, "Synced Document", 1, 18),
+            _para("First paragraph after sync.\n", 18, 47),
+            _para("Second paragraph after sync.\n", 47, 77),
+        )
+        ev = assemble_range_markdown_evidence(
+            input_markdown=(
+                "# Synced Document\n\nFirst paragraph after sync.\n\nSecond paragraph after sync.\n"
+            ),
+            post_body=post,
+            start_index=1,
+            end_index=77,
+            revision_before="rev-1",
+            revision_after="rev-2",
+            applied=True,
+            audit_logged=True,
+        )
+        assert ev["input_blocks"] == 3
+        assert ev["post_blocks"] == 3
+        assert ev["structural_match"] is True
+        assert "structural_diff" not in ev
+
 
 # ---------------------------------------------------------------------------
 # assemble_structural_evidence

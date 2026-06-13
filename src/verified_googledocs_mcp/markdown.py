@@ -62,12 +62,30 @@ class _Converter:
         self._list_counters: list[int] = []
 
     def convert(self, body: dict[str, Any]) -> str:
-        parts: list[str] = []
+        # Each rendered block is tracked with whether it is a list item so that
+        # consecutive list items stay tight (one newline) while distinct
+        # block-level elements are separated by a blank line. A single newline
+        # between two paragraphs is a soft break in markdown and would be
+        # re-parsed as one paragraph — that collapse is the #36 false negative.
+        rendered: list[tuple[bool, str]] = []
         for content in body.get("content", []):
             chunk = self._structural_element(content)
-            if chunk is not None:
-                parts.append(chunk)
-        return "\n".join(parts).strip() + "\n" if parts else ""
+            if not chunk:  # skip None and blank paragraphs (spacing only)
+                continue
+            is_list_item = "paragraph" in content and content["paragraph"].get("bullet") is not None
+            rendered.append((is_list_item, chunk))
+
+        if not rendered:
+            return ""
+
+        out: list[str] = [rendered[0][1]]
+        for idx in range(1, len(rendered)):
+            prev_is_list_item = rendered[idx - 1][0]
+            cur_is_list_item, chunk = rendered[idx]
+            separator = "\n" if (prev_is_list_item and cur_is_list_item) else "\n\n"
+            out.append(separator)
+            out.append(chunk)
+        return "".join(out).strip() + "\n"
 
     # ------------------------------------------------------------------
     # Structural elements
