@@ -5,7 +5,6 @@ import pytest
 
 from googledocs_mcp.verify import (
     ErrorCode,
-    LocateResult,
     VerifyError,
     locate,
     RUNG_EXACT,

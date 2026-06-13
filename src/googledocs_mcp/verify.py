@@ -32,7 +32,6 @@ import difflib
 import json
 import os
 import re
-import unicodedata
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -389,9 +388,6 @@ def locate(
 
     # Each rung produces (normalized_text, orig_pos_map, rung_label).
     # We apply normalization to both needle and haystack at each rung.
-    rungs: list[tuple[str, list[int], str, str]] = [
-        # (norm_haystack, orig_pos, norm_needle, rung_label)
-    ]
 
     def _build_rung(
         norm_fn: Any, label: str, prev_haystack: str, prev_needle: str

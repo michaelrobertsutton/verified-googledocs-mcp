@@ -1,5 +1,7 @@
 """Tests for the error envelope — ErrorCode enum, ErrorEnvelope dataclass, VerifyError."""
 
+import dataclasses
+
 import pytest
 
 from googledocs_mcp.verify import (
@@ -124,4 +126,3 @@ class TestVerifyError:
             assert err.envelope.retryable is False
 
 
-import dataclasses  # noqa: E402 — needed for frozen test above
