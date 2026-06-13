@@ -1,5 +1,9 @@
 # verified-googledocs-mcp
 
+[![CI](https://github.com/michaelrobertsutton/verified-googledocs-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/michaelrobertsutton/verified-googledocs-mcp/actions/workflows/ci.yml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 An MCP server for Google Docs whose writes carry proof. Every mutating tool re-reads the affected content from the document after it writes and returns evidence of what actually changed: before/after excerpts, the match count, and the document revision before and after. A tool never reports success for an edit that did not land.
 
 > **Status:** early, built in the open. All 14 tools are implemented and covered by an offline unit suite. What's left before a release: validating a handful of Google Docs API behaviors against a live document, a live smoke suite, and PyPI packaging. See [Status](#status). Not yet on PyPI.
