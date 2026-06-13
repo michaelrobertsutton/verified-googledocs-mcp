@@ -10,7 +10,7 @@ fixtures.
 | **Fixture document** | `1Zm_6bAwA7UH1DKkGVL3kg9XcQ6rIZHmUFcQPTcoJb6Y` (seeded in #1, extended in #31 with a HEADING_1 and a nested tab) |
 | **Suite** | `tests/live/` — driven by the in-memory FastMCP `Client(mcp)`, so tool registration and the evidence-enforcement middleware run on the path out to the live API |
 | **How to run** | `pytest --run-live` (requires OAuth credentials; never runs in CI) |
-| **Result (latest retest)** | **56 passed, 1 xfailed** |
+| **Result** | **57 passed, 0 xfailed — gate MET ✅** |
 
 Status legend: **live** (proven directly against the API) · **sim** (proven via
 a controlled simulation in which the real API still produces the
@@ -25,7 +25,7 @@ rejection/re-query) · **diverged** (a filed defect; the assertion is quarantine
 | `list_tabs` (incl. the nested tab) | live | `test_reads.py::TestListTabs` |
 | `find_sections` | live | `test_reads.py::TestFindSections` |
 | `replace_text` | live | `test_replace_text.py` (whole module) |
-| `replace_range_markdown` | live¹ | `test_markdown_writes.py::TestReplaceRangeMarkdown` |
+| `replace_range_markdown` | live | `test_markdown_writes.py::TestReplaceRangeMarkdown` |
 | `replace_tab_markdown` | live | `test_markdown_writes.py::TestReplaceTabMarkdown` |
 | `append_markdown` | live | `test_markdown_writes.py::TestAppendMarkdown` |
 | `insert_image` | live | `test_markdown_writes.py::TestInsertImage` |
@@ -35,10 +35,6 @@ rejection/re-query) · **diverged** (a filed defect; the assertion is quarantine
 | `reply_to_comment` | live | `test_comments.py::TestReplyToComment` |
 | `resolve_comment` | live | `test_comments.py::TestResolveComment` |
 | `diff_tab_vs_file` | live | `test_sync.py::TestDiffTabVsFile` |
-
-¹ The *write* is correct (the range is replaced and confirmed by re-read); the
-`structural_match` *evidence* still false-negatives because the re-export slice
-over-captures adjacent paragraphs (#43). Whole-tab `structural_match` is correct.
 
 ## §7 error-code matrix — all 12 codes triggered live
 
@@ -65,7 +61,7 @@ over-captures adjacent paragraphs (#43). Whole-tab `structural_match` is correct
 
 **§2 Verified text edits** — all four normalization rungs reported correctly (`exact`, `curly_straight_quotes`, `nbsp_whitespace_runs`, `soft_hyphen_strip`); `ZERO_MATCH` + near-miss; the match-count guard refuses the duplicate and makes no edit (proven on both a copy and the canonical doc); tab scoping leaves the other tab byte-for-byte identical; an edit positioned after emoji / ZWJ / combining-mark / RTL text lands on the intended span with the hazard characters intact; dry-run predicts without writing (revision unchanged); `REVISION_CONFLICT` (sim); evidence shape verified (before/after are server re-reads, `revision_before` ≠ `revision_after`, `match_count` + `rung` present, `audit_logged: true`).
 
-**§3 Markdown writes** — `replace_range_markdown` replaces the `Text Hazards` range, then `STALE_RANGE` on reuse; `replace_tab_markdown` whole-tab replace lands the new structure and `structural_match` confirms it; `append_markdown` appends cleanly without fusing the trailing paragraph; `insert_image` succeeds at a quoted anchor and at the heading with `inline_object_confirmed`, local path → `IMAGE_SOURCE_UNSUPPORTED`; out-of-subset markdown → `UNSUPPORTED_MARKDOWN` naming the construct; `STRUCTURAL_BOUNDARY` covered in §2. *One residual evidence divergence: #43 (range `structural_match` slice over-capture).*
+**§3 Markdown writes** — `replace_range_markdown` replaces the `Text Hazards` range, then `STALE_RANGE` on reuse; `replace_tab_markdown` whole-tab replace lands the new structure and `structural_match` confirms it; `append_markdown` appends cleanly without fusing the trailing paragraph; `insert_image` succeeds at a quoted anchor and at the heading with `inline_object_confirmed`, local path → `IMAGE_SOURCE_UNSUPPORTED`; out-of-subset markdown → `UNSUPPORTED_MARKDOWN` naming the construct; `STRUCTURAL_BOUNDARY` covered in §2.
 
 **§4 Comments & suggestions** — `list_open_items` returns open comments **and** pending suggestions in one call; `get_comment_thread` returns the full reply chain; `add_anchored_comment` is quote-validated (doc-level rendering per the #1 spike), absent quote → `QUOTE_NOT_FOUND` with candidates; `reply_to_comment` appears on re-query; **`resolve_comment` actually closes the comment** (re-query confirms `resolved: true`, closed via the `action: resolve` reply — the incumbent-bug regression), and the failure path → `COMMENT_STILL_OPEN` (sim).
 
@@ -86,12 +82,12 @@ over-captures adjacent paragraphs (#43). Whole-tab `structural_match` is correct
 | [#36](https://github.com/michaelrobertsutton/verified-googledocs-mcp/issues/36) | ✅ fixed | `to_markdown` emits blank lines between blocks; whole-tab `structural_match` correct |
 | [#37](https://github.com/michaelrobertsutton/verified-googledocs-mcp/issues/37) | ✅ fixed | `append_markdown` opens a fresh paragraph; no longer fuses |
 | [#38](https://github.com/michaelrobertsutton/verified-googledocs-mcp/issues/38) | ✅ fixed | `insert_image` verifier scans past the intermediate empty paragraph |
-| [#43](https://github.com/michaelrobertsutton/verified-googledocs-mcp/issues/43) | open | `replace_range_markdown` `structural_match` re-export slice over-captures adjacent paragraphs (write is correct) |
+| [#43](https://github.com/michaelrobertsutton/verified-googledocs-mcp/issues/43) | ✅ fixed | `replace_range_markdown` evidence slice now bounded to the inserted extent; range `structural_match` correct |
 
-## Definition of done
+## Definition of done — met ✅
 
 - ✅ Every tool exercised live.
 - ✅ All 12 error codes triggered live with their shape recorded.
 - ✅ Both acceptance workflows green with zero manual steps.
-- ✅ Results recorded (this report); every divergence filed; #28/#29/#30/#31/#36/#37/#38 resolved.
-- ⛔ **One divergence remains: #43** (`replace_range_markdown` `structural_match` evidence — the write is correct, the evidence over-reports). Re-run `pytest --run-live` after it lands; the gate is met when the final `xfail` flips to passing, at which point #6 is unblocked.
+- ✅ Results recorded (this report); every divergence filed and resolved (#28/#29/#30/#31/#36/#37/#38/#43).
+- ✅ **Full suite green: `pytest --run-live` → 57 passed, 0 xfailed, 0 skipped.** The verified-write contract holds against the live API. #6 is unblocked.
