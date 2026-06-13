@@ -188,11 +188,6 @@ class TestAppendMarkdown:
         # Existing content above is preserved (append, not replace).
         assert "Curly quotes" in after
 
-    @pytest.mark.xfail(
-        reason="#37 — append_markdown inserts before the final newline, fusing the appended "
-        "block into the trailing paragraph and restyling it as a heading (garbled output).",
-        strict=False,
-    )
     async def test_append_does_not_fuse_with_trailing_paragraph(self, client, scratch_doc):
         await client.call_tool(
             "append_markdown",
