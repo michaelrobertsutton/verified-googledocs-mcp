@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "verified-googledocs-mcp": {
+      "command": "uv",
+      "args": ["run", "verified-googledocs-mcp"]
+    }
+  }
+}
