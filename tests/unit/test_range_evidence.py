@@ -399,3 +399,21 @@ class TestAssembleStructuralEvidence:
         )
         assert ev["revision_before"] == "rev-AAA"
         assert ev["revision_after"] == "rev-BBB"
+
+    def test_inline_object_confirmed_through_intermediate_empty_paragraph(self) -> None:
+        # Regression test for #38: execute_insert_image creates an intermediate
+        # empty paragraph between the anchor and the image paragraph, so the
+        # image lands two paragraphs after the anchor rather than one.
+        anchor = _para("Duplicate sentence test:\n", 125, 150)
+        empty = _para("\n", 150, 151)  # intermediate empty paragraph (#38)
+        image = _inline_image_para("img-1", 151, 197)
+        post = _body(anchor, empty, image)
+        ev = assemble_structural_evidence(
+            post_body=post,
+            anchor_paragraph_start=125,
+            revision_before="rev-1",
+            revision_after="rev-2",
+            applied=True,
+            audit_logged=True,
+        )
+        assert ev["inline_object_confirmed"] is True
