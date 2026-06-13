@@ -278,7 +278,7 @@ def list_open_items(doc_id: str, tab_id: str = "") -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(name="get_comment_thread")
 def get_comment_thread_tool(doc_id: str, comment_id: str) -> dict[str, Any]:
     """Retrieve the full reply chain for a comment.
 
