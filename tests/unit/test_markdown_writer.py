@@ -21,11 +21,7 @@ from verified_googledocs_mcp.markdown_writer import (
 
 def _insert_texts(requests: list) -> list[str]:
     """Extract ordered insertText strings from a request list."""
-    return [
-        r["insertText"]["text"]
-        for r in requests
-        if "insertText" in r
-    ]
+    return [r["insertText"]["text"] for r in requests if "insertText" in r]
 
 
 def _find_requests(requests: list, key: str) -> list[dict]:
@@ -242,7 +238,11 @@ def test_utf16_index_after_astral_emoji():
     reqs = compile_markdown(src, start_index=1)
 
     # Collect all insertText requests in order.
-    inserts = [(r["insertText"]["location"]["index"], r["insertText"]["text"]) for r in reqs if "insertText" in r]
+    inserts = [
+        (r["insertText"]["location"]["index"], r["insertText"]["text"])
+        for r in reqs
+        if "insertText" in r
+    ]
 
     # Find the insert containing "second para".
     second_para_inserts = [(idx, t) for idx, t in inserts if "second" in t]

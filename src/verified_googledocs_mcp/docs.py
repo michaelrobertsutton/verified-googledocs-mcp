@@ -25,6 +25,7 @@ IMPLICIT_TAB_ID = "_body"
 # Tab metadata
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TabInfo:
     tab_id: str
@@ -67,6 +68,7 @@ def _parse_tab(raw: dict[str, Any]) -> TabInfo:
 # ---------------------------------------------------------------------------
 # Tab body extraction
 # ---------------------------------------------------------------------------
+
 
 def _find_tab_body(doc: dict[str, Any], tab_id: str) -> dict[str, Any] | None:
     """Locate and return the body dict for the given tab_id.
@@ -117,6 +119,7 @@ def _available_tab_ids(doc: dict[str, Any]) -> list[str]:
 # read_document logic
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ReadResult:
     doc_id: str
@@ -144,9 +147,7 @@ def read_tab(
     body = _find_tab_body(doc, tab_id)
     if body is None:
         available = _available_tab_ids(doc)
-        raise ValueError(
-            f"Tab '{tab_id}' not found. Available tabs: {available}"
-        )
+        raise ValueError(f"Tab '{tab_id}' not found. Available tabs: {available}")
 
     revision_id = doc.get("revisionId", "")
 
@@ -158,10 +159,7 @@ def read_tab(
             format="markdown",
             content=md,
             revision_id=revision_id,
-            lossy_elements=[
-                {"kind": e.kind, "placeholder": e.placeholder}
-                for e in lossy
-            ],
+            lossy_elements=[{"kind": e.kind, "placeholder": e.placeholder} for e in lossy],
         )
 
     # Structured format: return the raw paragraph data with positions and style.
@@ -190,26 +188,31 @@ def _extract_structured(body: dict[str, Any]) -> dict[str, Any]:
                     tr = inline["textRun"]
                     ts = tr.get("textStyle", {})
                     text = tr.get("content", "")
-                    runs.append({
-                        "text": text,
-                        "bold": ts.get("bold", False),
-                        "italic": ts.get("italic", False),
-                        "link": ts.get("link", {}).get("url", ""),
-                        "start": inline.get("startIndex", 0),
-                        "end": inline.get("endIndex", 0),
-                    })
-            paragraphs.append({
-                "style": style,
-                "start": start,
-                "end": end,
-                "runs": runs,
-            })
+                    runs.append(
+                        {
+                            "text": text,
+                            "bold": ts.get("bold", False),
+                            "italic": ts.get("italic", False),
+                            "link": ts.get("link", {}).get("url", ""),
+                            "start": inline.get("startIndex", 0),
+                            "end": inline.get("endIndex", 0),
+                        }
+                    )
+            paragraphs.append(
+                {
+                    "style": style,
+                    "start": start,
+                    "end": end,
+                    "runs": runs,
+                }
+            )
     return {"paragraphs": paragraphs}
 
 
 # ---------------------------------------------------------------------------
 # find_sections logic
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SectionMatch:
@@ -239,9 +242,7 @@ def find_sections_in(
     body = _find_tab_body(doc, tab_id)
     if body is None:
         available = _available_tab_ids(doc)
-        raise ValueError(
-            f"Tab '{tab_id}' not found. Available tabs: {available}"
-        )
+        raise ValueError(f"Tab '{tab_id}' not found. Available tabs: {available}")
 
     revision_id = doc.get("revisionId", "")
     needle = heading.lower()
@@ -280,12 +281,14 @@ def find_sections_in(
 # Google API helpers (I/O edge — not pure transforms)
 # ---------------------------------------------------------------------------
 
+
 def build_docs_service(credentials: Any) -> Any:  # type: ignore[return]
     """Build and return a Google Docs API service resource.
 
     credentials: a google.oauth2.credentials.Credentials instance.
     """
     from googleapiclient.discovery import build
+
     return build("docs", "v1", credentials=credentials)
 
 
@@ -297,7 +300,5 @@ def fetch_document(service: Any, doc_id: str) -> dict[str, Any]:
     rather than a custom loop.
     """
     return (
-        service.documents()
-        .get(documentId=doc_id, includeTabsContent=True)
-        .execute(num_retries=3)
+        service.documents().get(documentId=doc_id, includeTabsContent=True).execute(num_retries=3)
     )

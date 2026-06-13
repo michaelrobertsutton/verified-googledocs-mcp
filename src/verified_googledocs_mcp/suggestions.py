@@ -26,6 +26,7 @@ from .docs import _available_tab_ids, _find_tab_body
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def extract_suggestions(
     document_json: dict[str, Any],
     tab_id: str,
@@ -62,9 +63,7 @@ def extract_suggestions(
     body = _find_tab_body(document_json, tab_id)
     if body is None:
         available = _available_tab_ids(document_json)
-        raise ValueError(
-            f"Tab '{tab_id}' not found. Available tabs: {available}"
-        )
+        raise ValueError(f"Tab '{tab_id}' not found. Available tabs: {available}")
 
     return _collect_suggestions(body, tab_id)
 
@@ -72,6 +71,7 @@ def extract_suggestions(
 # ---------------------------------------------------------------------------
 # Suggestion collection
 # ---------------------------------------------------------------------------
+
 
 def _collect_suggestions(
     body: dict[str, Any],
@@ -163,9 +163,7 @@ def _process_table(
         for cell in row.get("tableCells", []):
             for content_elem in cell.get("content", []):
                 if "paragraph" in content_elem:
-                    _process_paragraph(
-                        content_elem["paragraph"], tab_id, accumulator
-                    )
+                    _process_paragraph(content_elem["paragraph"], tab_id, accumulator)
                 elif "table" in content_elem:
                     _process_table(content_elem["table"], tab_id, accumulator)
 

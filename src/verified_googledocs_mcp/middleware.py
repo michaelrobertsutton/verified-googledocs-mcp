@@ -83,9 +83,7 @@ class EvidenceEnforcementMiddleware(Middleware):
                 if text:
                     try:
                         parsed: Any = json.loads(text)
-                        if isinstance(parsed, dict) and _EVIDENCE_KEYS.intersection(
-                            parsed.keys()
-                        ):
+                        if isinstance(parsed, dict) and _EVIDENCE_KEYS.intersection(parsed.keys()):
                             return result
                     except (json.JSONDecodeError, ValueError):
                         pass

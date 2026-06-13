@@ -112,6 +112,7 @@ class TestReadTab:
 
     def test_read_tab_lossy_elements_in_result(self) -> None:
         from tests.unit.fixtures.docs_api import lossy_elements_doc
+
         doc = lossy_elements_doc()
         result = read_tab(doc, "doc-lossy", "tab-main", format="markdown")
         assert len(result.lossy_elements) >= 3

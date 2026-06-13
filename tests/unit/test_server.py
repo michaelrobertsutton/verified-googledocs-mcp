@@ -28,8 +28,9 @@ def _mock_fetch(doc: dict[str, Any]):
     def _fake_fetch(service, doc_id):
         return doc
 
-    return patch("verified_googledocs_mcp.server.get_credentials", _fake_get_credentials), \
-           patch("verified_googledocs_mcp.server.fetch_document", _fake_fetch)
+    return patch("verified_googledocs_mcp.server.get_credentials", _fake_get_credentials), patch(
+        "verified_googledocs_mcp.server.fetch_document", _fake_fetch
+    )
 
 
 class TestListTabsTool:
@@ -135,6 +136,7 @@ class TestReadDocumentTool:
     @pytest.mark.asyncio
     async def test_lossy_elements_key_present_when_nonempty(self) -> None:
         from tests.unit.fixtures.docs_api import lossy_elements_doc
+
         doc = lossy_elements_doc()
         p1, p2 = _mock_fetch(doc)
         with p1, p2:

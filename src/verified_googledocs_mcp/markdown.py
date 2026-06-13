@@ -54,6 +54,7 @@ def to_markdown(tab_body: dict[str, Any]) -> tuple[str, list[LossyElement]]:
 # Internal converter
 # ---------------------------------------------------------------------------
 
+
 class _Converter:
     def __init__(self) -> None:
         self.lossy_elements: list[LossyElement] = []
@@ -119,9 +120,22 @@ class _Converter:
         # The glyph type lives on the list definition in the parent document;
         # we only have a fragment here, so we fall back to BULLET for any
         # type we cannot distinguish.
-        glyph_type = list_props.get("nestingLevel", [{}])[nesting if nesting < len(list_props.get("nestingLevel", [])) else 0].get("glyphType", "BULLET") if "nestingLevel" in list_props else "BULLET"
+        glyph_type = (
+            list_props.get("nestingLevel", [{}])[
+                nesting if nesting < len(list_props.get("nestingLevel", [])) else 0
+            ].get("glyphType", "BULLET")
+            if "nestingLevel" in list_props
+            else "BULLET"
+        )
 
-        if glyph_type in ("DECIMAL", "ALPHA", "ROMAN", "UPPER_ALPHA", "UPPER_ROMAN", "ZERO_DECIMAL"):
+        if glyph_type in (
+            "DECIMAL",
+            "ALPHA",
+            "ROMAN",
+            "UPPER_ALPHA",
+            "UPPER_ROMAN",
+            "ZERO_DECIMAL",
+        ):
             return f"{indent}1. {inline}"
         return f"{indent}- {inline}"
 

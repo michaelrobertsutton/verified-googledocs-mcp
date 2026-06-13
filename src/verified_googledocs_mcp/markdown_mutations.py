@@ -291,11 +291,15 @@ def execute_replace_range_markdown(
 
     # --- Assemble evidence ---------------------------------------------------
     # Approximate post-write range end for re-export slicing.
-    approx_end = start_index + sum(
-        len(r.get("insertText", {}).get("text", ""))
-        for r in compiled_requests
-        if "insertText" in r
-    ) + 100
+    approx_end = (
+        start_index
+        + sum(
+            len(r.get("insertText", {}).get("text", ""))
+            for r in compiled_requests
+            if "insertText" in r
+        )
+        + 100
+    )
     evidence = assemble_range_markdown_evidence(
         input_markdown=markdown,
         post_body=post_body,
@@ -547,11 +551,15 @@ def execute_append_markdown(
     post_body = _find_tab_body(post_doc, tab_id) or {}
 
     # --- Assemble evidence ---------------------------------------------------
-    approx_end = insert_at + sum(
-        len(r.get("insertText", {}).get("text", ""))
-        for r in compiled_requests
-        if "insertText" in r
-    ) + 50
+    approx_end = (
+        insert_at
+        + sum(
+            len(r.get("insertText", {}).get("text", ""))
+            for r in compiled_requests
+            if "insertText" in r
+        )
+        + 50
+    )
     evidence = assemble_range_markdown_evidence(
         input_markdown=markdown,
         post_body=post_body,
@@ -772,20 +780,24 @@ def execute_diff_tab_vs_file(
     matcher = difflib.SequenceMatcher(None, tab_lines, file_lines)
     hunks: list[dict[str, Any]] = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        hunks.append({
-            "tag": tag,
-            "tab_lines": tab_lines[i1:i2],
-            "file_lines": file_lines[j1:j2],
-            "tab_range": [i1 + 1, i2],
-            "file_range": [j1 + 1, j2],
-        })
+        hunks.append(
+            {
+                "tag": tag,
+                "tab_lines": tab_lines[i1:i2],
+                "file_lines": file_lines[j1:j2],
+                "tab_range": [i1 + 1, i2],
+                "file_range": [j1 + 1, j2],
+            }
+        )
 
-    unified = list(difflib.unified_diff(
-        tab_lines,
-        file_lines,
-        fromfile=f"doc:{doc_id}/{tab_id}",
-        tofile=file_path,
-    ))
+    unified = list(
+        difflib.unified_diff(
+            tab_lines,
+            file_lines,
+            fromfile=f"doc:{doc_id}/{tab_id}",
+            tofile=file_path,
+        )
+    )
 
     return {
         "doc_id": doc_id,
@@ -806,6 +818,7 @@ def execute_diff_tab_vs_file(
 def _parse_markdown_blocks_for_guardrail(markdown: str) -> list[dict[str, Any]]:
     """Light block parse to count tables and structural types for the guardrail."""
     from .verify import _parse_markdown_blocks
+
     return _parse_markdown_blocks(markdown)
 
 

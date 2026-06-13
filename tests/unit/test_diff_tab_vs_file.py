@@ -60,7 +60,9 @@ def _heading_para(level: int, text: str, start: int, end: int) -> dict[str, Any]
     }
 
 
-def _doc_with_content(content_elements: list[dict[str, Any]], revision: str = "rev-1") -> dict[str, Any]:
+def _doc_with_content(
+    content_elements: list[dict[str, Any]], revision: str = "rev-1"
+) -> dict[str, Any]:
     return {
         "documentId": "doc-diff",
         "revisionId": revision,
@@ -100,9 +102,11 @@ def _mock_fetch_doc(doc: dict[str, Any]):
 class TestDiffTabVsFile:
     @pytest.mark.asyncio
     async def test_identical_returns_identical_true(self, tmp_path: Path) -> None:
-        doc = _doc_with_content([
-            _heading_para(1, "Hello", 1, 8),
-        ])
+        doc = _doc_with_content(
+            [
+                _heading_para(1, "Hello", 1, 8),
+            ]
+        )
         # Export the doc to find what markdown it produces, then match that exactly.
         # The tab will produce "# Hello\n" via to_markdown.
         file = tmp_path / "test.md"
@@ -127,9 +131,11 @@ class TestDiffTabVsFile:
 
     @pytest.mark.asyncio
     async def test_different_content_returns_diff(self, tmp_path: Path) -> None:
-        doc = _doc_with_content([
-            _para("Hello world\n", 1, 13),
-        ])
+        doc = _doc_with_content(
+            [
+                _para("Hello world\n", 1, 13),
+            ]
+        )
         file = tmp_path / "test.md"
         file.write_text("Hello planet\n", encoding="utf-8")
 

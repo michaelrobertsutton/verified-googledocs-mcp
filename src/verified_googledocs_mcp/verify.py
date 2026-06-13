@@ -735,12 +735,14 @@ def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
             if item.type == "list_item":
                 for child in item.children:
                     if child.type == "paragraph":
-                        blocks.append({
-                            "type": "list_item",
-                            "nesting": nesting,
-                            "text": _norm(_inline_text(child)),
-                            "link_targets": _links(child),
-                        })
+                        blocks.append(
+                            {
+                                "type": "list_item",
+                                "nesting": nesting,
+                                "text": _norm(_inline_text(child)),
+                                "link_targets": _links(child),
+                            }
+                        )
                     elif child.type in ("bullet_list", "ordered_list"):
                         _list_items(child, nesting + 1)
 
@@ -749,18 +751,22 @@ def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
             t = child.type
             if t == "heading":
                 level = len(child.markup)
-                blocks.append({
-                    "type": "heading",
-                    "level": level,
-                    "text": _norm(_inline_text(child)),
-                    "link_targets": _links(child),
-                })
+                blocks.append(
+                    {
+                        "type": "heading",
+                        "level": level,
+                        "text": _norm(_inline_text(child)),
+                        "link_targets": _links(child),
+                    }
+                )
             elif t == "paragraph":
-                blocks.append({
-                    "type": "paragraph",
-                    "text": _norm(_inline_text(child)),
-                    "link_targets": _links(child),
-                })
+                blocks.append(
+                    {
+                        "type": "paragraph",
+                        "text": _norm(_inline_text(child)),
+                        "link_targets": _links(child),
+                    }
+                )
             elif t in ("bullet_list", "ordered_list"):
                 _list_items(child, 0)
             elif t == "table":

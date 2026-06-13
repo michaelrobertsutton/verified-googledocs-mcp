@@ -138,8 +138,16 @@ class TestAssembleCommentStateEvidence:
         raw = _raw_comment(comment_id="c-1", resolved=True)
         comment = _format_comment(raw)
         ev = assemble_comment_state_evidence(comment=comment, applied=True, audit_logged=True)
-        for key in ("applied", "comment_id", "resolved", "reply_count", "content",
-                    "quoted_text", "author", "audit_logged"):
+        for key in (
+            "applied",
+            "comment_id",
+            "resolved",
+            "reply_count",
+            "content",
+            "quoted_text",
+            "author",
+            "audit_logged",
+        ):
             assert key in ev, f"key {key!r} missing"
 
     def test_resolved_true_when_comment_resolved(self) -> None:
@@ -188,8 +196,10 @@ class TestAssembleCommentStateEvidence:
     def test_audit_log_reason_present_when_set(self) -> None:
         raw = _raw_comment()
         ev = assemble_comment_state_evidence(
-            comment=_format_comment(raw), applied=True, audit_logged=False,
-            audit_log_reason="disk full"
+            comment=_format_comment(raw),
+            applied=True,
+            audit_logged=False,
+            audit_log_reason="disk full",
         )
         assert ev["audit_log_reason"] == "disk full"
 
@@ -244,27 +254,21 @@ class TestResolveComment:
         open_raw = _raw_comment(resolved=False)
         drive_svc = _make_drive_service(comment=open_raw, re_query_comment=open_raw)
         with pytest.raises(VerifyError) as exc_info:
-            execute_resolve_comment(
-                drive_service=drive_svc, doc_id="doc-1", comment_id="c-1"
-            )
+            execute_resolve_comment(drive_service=drive_svc, doc_id="doc-1", comment_id="c-1")
         assert exc_info.value.envelope.error_code == ErrorCode.COMMENT_STILL_OPEN
 
     def test_comment_still_open_not_retryable(self) -> None:
         open_raw = _raw_comment(resolved=False)
         drive_svc = _make_drive_service(comment=open_raw, re_query_comment=open_raw)
         with pytest.raises(VerifyError) as exc_info:
-            execute_resolve_comment(
-                drive_service=drive_svc, doc_id="doc-1", comment_id="c-1"
-            )
+            execute_resolve_comment(drive_service=drive_svc, doc_id="doc-1", comment_id="c-1")
         assert not exc_info.value.envelope.retryable
 
     def test_post_state_in_diagnostics_when_still_open(self) -> None:
         open_raw = _raw_comment(resolved=False, comment_id="c-bad")
         drive_svc = _make_drive_service(comment=open_raw, re_query_comment=open_raw)
         with pytest.raises(VerifyError) as exc_info:
-            execute_resolve_comment(
-                drive_service=drive_svc, doc_id="doc-1", comment_id="c-bad"
-            )
+            execute_resolve_comment(drive_service=drive_svc, doc_id="doc-1", comment_id="c-bad")
         diag = exc_info.value.envelope.diagnostics
         assert "post_state" in diag
 
@@ -312,7 +316,9 @@ class TestReplyToComment:
 
     def test_happy_path_evidence_keys(self, tmp_path, monkeypatch) -> None:
         monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-        replies = [{"id": "r-1", "content": "Thanks", "action": "", "author": {}, "createdTime": ""}]
+        replies = [
+            {"id": "r-1", "content": "Thanks", "action": "", "author": {}, "createdTime": ""}
+        ]
         comment_raw = _raw_comment(replies=replies)
         drive_svc = self._make_drive_with_reply(comment_raw)
         evidence = execute_reply_to_comment(

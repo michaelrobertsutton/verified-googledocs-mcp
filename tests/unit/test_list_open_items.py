@@ -193,7 +193,9 @@ def _make_patches(
 
     p_creds = patch("verified_googledocs_mcp.server.get_credentials", return_value=mock_creds)
     p_docs = patch("verified_googledocs_mcp.server.build_docs_service", return_value=mock_docs_svc)
-    p_drive = patch("verified_googledocs_mcp.server.build_drive_service", return_value=mock_drive_svc)
+    p_drive = patch(
+        "verified_googledocs_mcp.server.build_drive_service", return_value=mock_drive_svc
+    )
     return p_creds, p_docs, p_drive
 
 
