@@ -58,12 +58,12 @@ class UnsupportedMarkdown(Exception):
         Human-readable name of the offending construct (e.g. ``"image"``,
         ``"code_block"``, ``"blockquote"``).
     source_map:
-        ``[start_line, end_line]`` from the markdown-it token's ``.map``
-        attribute, or ``None`` if the token has no position information.
+        ``(start_line, end_line)`` from the markdown-it node's ``.map``
+        attribute, or ``None`` if the node has no position information.
     """
 
     construct: str
-    source_map: list[int] | None = None
+    source_map: tuple[int, int] | None = None
 
     def __str__(self) -> str:
         loc = f" at lines {self.source_map[0] + 1}-{self.source_map[1]}" if self.source_map else ""
@@ -340,7 +340,7 @@ class _Compiler:
             if span_end > span_start:
                 self._style_spans.append(_StyleSpan(start=span_start, end=span_end, italic=True))
         elif t == "link":
-            url = node.attrGet("href") or ""
+            url = str(node.attrGet("href") or "")
             span_start = self._cursor
             for child in node.children:
                 self._visit_inline_node(child)
