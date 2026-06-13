@@ -25,7 +25,14 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.base import ToolResult
 
 # Explicit registry of mutating tool names.  Extend as new tools are added.
-MUTATING_TOOLS: frozenset[str] = frozenset({"replace_text"})
+MUTATING_TOOLS: frozenset[str] = frozenset(
+    {
+        "replace_text",
+        "add_anchored_comment",
+        "reply_to_comment",
+        "resolve_comment",
+    }
+)
 
 _EVIDENCE_KEYS = frozenset({"applied", "error_code"})
 

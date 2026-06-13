@@ -19,9 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-# The synthetic tab id used for tabless (legacy) documents, matching the
-# convention in docs.py.
-_IMPLICIT_TAB_ID = "_body"
+from .docs import _available_tab_ids, _find_tab_body
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +59,7 @@ def extract_suggestions(
         If ``tab_id`` is not found in the document.  The error message lists
         available tab IDs, matching the convention used in ``docs.py``.
     """
-    body = _resolve_tab_body(document_json, tab_id)
+    body = _find_tab_body(document_json, tab_id)
     if body is None:
         available = _available_tab_ids(document_json)
         raise ValueError(
@@ -69,56 +67,6 @@ def extract_suggestions(
         )
 
     return _collect_suggestions(body, tab_id)
-
-
-# ---------------------------------------------------------------------------
-# Tab resolution (mirrors docs.py without importing it)
-# ---------------------------------------------------------------------------
-
-def _resolve_tab_body(
-    doc: dict[str, Any],
-    tab_id: str,
-) -> dict[str, Any] | None:
-    tabs_raw = doc.get("tabs", [])
-    if not tabs_raw:
-        # Tabless document — treat top-level body as the single implicit tab.
-        if tab_id == _IMPLICIT_TAB_ID:
-            return doc.get("body")
-        return None
-    return _search_tabs(tabs_raw, tab_id)
-
-
-def _search_tabs(
-    tabs: list[dict[str, Any]],
-    tab_id: str,
-) -> dict[str, Any] | None:
-    for tab in tabs:
-        props = tab.get("tabProperties", {})
-        if props.get("tabId") == tab_id:
-            doc_tab = tab.get("documentTab", {})
-            return doc_tab.get("body")
-        child_result = _search_tabs(tab.get("childTabs", []), tab_id)
-        if child_result is not None:
-            return child_result
-    return None
-
-
-def _available_tab_ids(doc: dict[str, Any]) -> list[str]:
-    tabs_raw = doc.get("tabs", [])
-    if not tabs_raw:
-        return [_IMPLICIT_TAB_ID]
-    ids: list[str] = []
-    _collect_tab_ids(tabs_raw, ids)
-    return ids
-
-
-def _collect_tab_ids(tabs: list[dict[str, Any]], out: list[str]) -> None:
-    for tab in tabs:
-        props = tab.get("tabProperties", {})
-        tid = props.get("tabId", "")
-        if tid:
-            out.append(tid)
-        _collect_tab_ids(tab.get("childTabs", []), out)
 
 
 # ---------------------------------------------------------------------------
