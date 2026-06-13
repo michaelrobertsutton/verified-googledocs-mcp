@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from googledocs_mcp.markdown_writer import (
+from verified_googledocs_mcp.markdown_writer import (
     UnsupportedMarkdown,
     _utf16_len,
     compile_markdown,

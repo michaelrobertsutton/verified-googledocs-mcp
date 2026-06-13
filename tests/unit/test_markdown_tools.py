@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastmcp import Client
 
-from googledocs_mcp.server import mcp
+from verified_googledocs_mcp.server import mcp
 from tests.unit.fixtures.markdown_tools import (
     doc_with_chip,
     doc_with_footnote,
@@ -51,10 +51,10 @@ def _build_mock_env(pre_doc: dict[str, Any], post_doc: dict[str, Any]):
         return pre_doc if idx == 0 else post_doc
 
     patchers = [
-        patch("googledocs_mcp.server.get_credentials", _fake_get_creds),
-        patch("googledocs_mcp.server.build_docs_service", _fake_build_service),
-        patch("googledocs_mcp.server.fetch_document", _fake_fetch),
-        patch("googledocs_mcp.markdown_mutations.fetch_document", _fake_fetch),
+        patch("verified_googledocs_mcp.server.get_credentials", _fake_get_creds),
+        patch("verified_googledocs_mcp.server.build_docs_service", _fake_build_service),
+        patch("verified_googledocs_mcp.server.fetch_document", _fake_fetch),
+        patch("verified_googledocs_mcp.markdown_mutations.fetch_document", _fake_fetch),
     ]
     return patchers, mock_service
 

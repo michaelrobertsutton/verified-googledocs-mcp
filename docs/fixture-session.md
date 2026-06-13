@@ -5,7 +5,7 @@ canonical test fixtures and answers the open Google API behavior questions in
 [`api-notes.md`](api-notes.md). Everything downstream (the regression tests,
 the live smoke suite) depends on the artifacts this session produces.
 
-Prerequisite: the Google Cloud + OAuth setup (repo issue #7). Then `googledocs-mcp auth`.
+Prerequisite: the Google Cloud + OAuth setup (repo issue #7). Then `verified-googledocs-mcp auth`.
 
 ## 1. Seed the scratch document
 

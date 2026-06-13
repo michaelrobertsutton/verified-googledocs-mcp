@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastmcp import Client
 
-from googledocs_mcp.server import mcp
+from verified_googledocs_mcp.server import mcp
 
 
 # ---------------------------------------------------------------------------
@@ -117,10 +117,10 @@ def _mock_replace(pre_doc: dict[str, Any], post_doc: dict[str, Any]):
         fetch_call_count[0] += 1
         return fetch_side_effects[idx] if idx < len(fetch_side_effects) else post_doc
 
-    p1 = patch("googledocs_mcp.server.get_credentials", _fake_get_credentials)
-    p2 = patch("googledocs_mcp.server.build_docs_service", _fake_build_service)
-    p3 = patch("googledocs_mcp.server.fetch_document", _fake_fetch)
-    p4 = patch("googledocs_mcp.mutations.fetch_document", _fake_fetch)
+    p1 = patch("verified_googledocs_mcp.server.get_credentials", _fake_get_credentials)
+    p2 = patch("verified_googledocs_mcp.server.build_docs_service", _fake_build_service)
+    p3 = patch("verified_googledocs_mcp.server.fetch_document", _fake_fetch)
+    p4 = patch("verified_googledocs_mcp.mutations.fetch_document", _fake_fetch)
     return p1, p2, p3, p4, mock_service
 
 
@@ -467,10 +467,10 @@ class TestReplaceTextErrors:
             fetch_idx[0] += 1
             return fetch_responses[idx] if idx < len(fetch_responses) else post
 
-        p1 = patch("googledocs_mcp.server.get_credentials", _fake_get_credentials)
-        p2 = patch("googledocs_mcp.server.build_docs_service", _fake_build_service)
-        p3 = patch("googledocs_mcp.server.fetch_document", _fake_fetch)
-        p4 = patch("googledocs_mcp.mutations.fetch_document", _fake_fetch)
+        p1 = patch("verified_googledocs_mcp.server.get_credentials", _fake_get_credentials)
+        p2 = patch("verified_googledocs_mcp.server.build_docs_service", _fake_build_service)
+        p3 = patch("verified_googledocs_mcp.server.fetch_document", _fake_fetch)
+        p4 = patch("verified_googledocs_mcp.mutations.fetch_document", _fake_fetch)
 
         with p1, p2, p3, p4:
             async with Client(mcp) as client:
@@ -492,7 +492,7 @@ class TestReplaceTextErrors:
         """If append_audit raises, evidence carries audit_logged: false."""
         p1, p2, p3, p4, _ = _mock_replace_simple("Hello world", "Hello planet")
         with p1, p2, p3, p4, patch(
-            "googledocs_mcp.mutations.append_audit",
+            "verified_googledocs_mcp.mutations.append_audit",
             return_value=(False, "permission denied"),
         ):
             async with Client(mcp) as client:
@@ -603,7 +603,7 @@ class TestReplaceTextAuditTrail:
                     },
                 )
         assert result.data["audit_logged"] is True
-        audit_file = tmp_path / "googledocs-mcp" / "audit.jsonl"
+        audit_file = tmp_path / "verified-googledocs-mcp" / "audit.jsonl"
         assert audit_file.exists()
         lines = [ln for ln in audit_file.read_text().splitlines() if ln.strip()]
         assert len(lines) == 1, f"expected one audit line, got {len(lines)}"

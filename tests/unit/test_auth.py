@@ -11,13 +11,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from googledocs_mcp import auth as auth_module
+from verified_googledocs_mcp import auth as auth_module
 
 
 @pytest.fixture()
 def tmp_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Redirect config and token paths to a temp directory."""
-    config_dir = tmp_path / "googledocs-mcp"
+    config_dir = tmp_path / "verified-googledocs-mcp"
     config_dir.mkdir()
 
     monkeypatch.setattr(auth_module, "_CONFIG_DIR", config_dir)
@@ -28,7 +28,7 @@ def tmp_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 class TestGetCredentials:
     def test_raises_when_no_token(self, tmp_config: Path) -> None:
-        with pytest.raises(RuntimeError, match="googledocs-mcp auth"):
+        with pytest.raises(RuntimeError, match="verified-googledocs-mcp auth"):
             auth_module.get_credentials()
 
     def test_raises_message_names_token_path(self, tmp_config: Path) -> None:
@@ -44,7 +44,7 @@ class TestGetCredentials:
         token_path.write_text("{}")
 
         # Patch Credentials at the module level where it is imported.
-        with patch("googledocs_mcp.auth.Credentials") as mock_creds_cls:
+        with patch("verified_googledocs_mcp.auth.Credentials") as mock_creds_cls:
             mock_creds_cls.from_authorized_user_file.return_value = mock_creds
             result = auth_module.get_credentials()
 
@@ -62,8 +62,8 @@ class TestGetCredentials:
         token_path.write_text("{}")
 
         with (
-            patch("googledocs_mcp.auth.Credentials") as mock_creds_cls,
-            patch("googledocs_mcp.auth.Request"),
+            patch("verified_googledocs_mcp.auth.Credentials") as mock_creds_cls,
+            patch("verified_googledocs_mcp.auth.Request"),
         ):
             mock_creds_cls.from_authorized_user_file.return_value = mock_creds
             result = auth_module.get_credentials()
@@ -88,11 +88,11 @@ class TestGetCredentials:
         token_path.write_text("{}")
 
         with (
-            patch("googledocs_mcp.auth.Credentials") as mock_creds_cls,
-            patch("googledocs_mcp.auth.Request"),
+            patch("verified_googledocs_mcp.auth.Credentials") as mock_creds_cls,
+            patch("verified_googledocs_mcp.auth.Request"),
         ):
             mock_creds_cls.from_authorized_user_file.return_value = mock_creds
-            with pytest.raises(RuntimeError, match="googledocs-mcp auth"):
+            with pytest.raises(RuntimeError, match="verified-googledocs-mcp auth"):
                 auth_module.get_credentials()
 
     def test_invalid_token_no_refresh_token_raises(self, tmp_config: Path) -> None:
@@ -104,9 +104,9 @@ class TestGetCredentials:
         token_path = tmp_config / "token.json"
         token_path.write_text("{}")
 
-        with patch("googledocs_mcp.auth.Credentials") as mock_creds_cls:
+        with patch("verified_googledocs_mcp.auth.Credentials") as mock_creds_cls:
             mock_creds_cls.from_authorized_user_file.return_value = mock_creds
-            with pytest.raises(RuntimeError, match="googledocs-mcp auth"):
+            with pytest.raises(RuntimeError, match="verified-googledocs-mcp auth"):
                 auth_module.get_credentials()
 
 
@@ -120,7 +120,7 @@ class TestRunAuthFlow:
         self, tmp_config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         custom_path = str(tmp_config / "custom-creds.json")
-        monkeypatch.setenv("GOOGLEDOCS_MCP_CREDENTIALS", custom_path)
+        monkeypatch.setenv("VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS", custom_path)
         with pytest.raises(SystemExit, match="custom-creds.json"):
             auth_module.run_auth_flow()
 
@@ -137,7 +137,7 @@ class TestRunAuthFlow:
         mock_flow = MagicMock()
         mock_flow.run_local_server.return_value = mock_creds
 
-        with patch("googledocs_mcp.auth.InstalledAppFlow") as mock_flow_cls:
+        with patch("verified_googledocs_mcp.auth.InstalledAppFlow") as mock_flow_cls:
             mock_flow_cls.from_client_secrets_file.return_value = mock_flow
             with patch("builtins.print"):
                 auth_module.run_auth_flow()
@@ -153,13 +153,13 @@ class TestCredentialsPath:
         assert path.name == "credentials.json"
 
     def test_env_var_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("GOOGLEDOCS_MCP_CREDENTIALS", "/tmp/my-creds.json")
+        monkeypatch.setenv("VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS", "/tmp/my-creds.json")
         path = auth_module._credentials_path()
         assert str(path) == "/tmp/my-creds.json"
 
     def test_env_var_cleared_restores_default(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("GOOGLEDOCS_MCP_CREDENTIALS", raising=False)
+        monkeypatch.delenv("VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS", raising=False)
         path = auth_module._credentials_path()
         assert path.name == "credentials.json"

@@ -1,13 +1,13 @@
 # Architecture
 
-`googledocs-mcp` is a single-user, stdio MCP server. It is deliberately small: a verification kernel that every mutating tool passes through, a thin layer of Google API access, and a markdown converter in each direction.
+`verified-googledocs-mcp` is a single-user, stdio MCP server. It is deliberately small: a verification kernel that every mutating tool passes through, a thin layer of Google API access, and a markdown converter in each direction.
 
 ## Module map
 
 ```
-src/googledocs_mcp/
+src/verified_googledocs_mcp/
   server.py          FastMCP app, tool registration, enforcement middleware
-  auth.py            OAuth installed-app flow + token cache (googledocs-mcp auth)
+  auth.py            OAuth installed-app flow + token cache (verified-googledocs-mcp auth)
   docs.py            Docs API: read a tab, list tabs, find sections, write
   comments.py        Drive API: comments, replies, verified resolve
   suggestions.py     Extract pending suggested edits from document JSON
@@ -24,7 +24,7 @@ A read goes `server -> docs -> markdown`. A verified mutation goes `server -> ve
 
 - **`locate(needle, tab_json, expected_matches)`** flattens a tab's JSON into text with an explicit UTF-16 index map, then walks a normalization ladder: exact, curly/straight quotes, non-breaking-space and whitespace runs, soft-hyphen stripping. It reports which rung matched, enforces the match-count guard, refuses matches that cross a paragraph or table-cell boundary, and on zero matches runs a bounded near-miss scan so the caller gets a "did you mean" span.
 - **The error envelope** (`ErrorCode`, `ErrorEnvelope`, `VerifyError`) is one typed shape for every failure: `error_code`, `message`, `diagnostics`, `retryable`. Tools surface it to the client so an agent can correct in one round trip instead of parsing prose.
-- **The audit writer** appends one JSON line per mutation to `~/.local/state/googledocs-mcp/audit.jsonl`. It is best-effort: it never fails a write, and a failed append is reported in the evidence as `audit_logged: false`.
+- **The audit writer** appends one JSON line per mutation to `~/.local/state/verified-googledocs-mcp/audit.jsonl`. It is best-effort: it never fails a write, and a failed append is reported in the evidence as `audit_logged: false`.
 
 ## The verified-mutation pipeline
 

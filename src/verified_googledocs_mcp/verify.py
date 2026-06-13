@@ -600,7 +600,7 @@ def _state_dir() -> Path:
         base = Path(xdg)
     else:
         base = Path.home() / ".local" / "state"
-    return base / "googledocs-mcp"
+    return base / "verified-googledocs-mcp"
 
 
 def append_audit(

@@ -9,8 +9,8 @@ as a deterministic, offline fixture.
 
 Prerequisites:
     - A Google Cloud project with the Docs + Drive APIs enabled and a Desktop
-      OAuth client secret at ~/.config/googledocs-mcp/credentials.json
-    - A cached token: run `googledocs-mcp auth` first.
+      OAuth client secret at ~/.config/verified-googledocs-mcp/credentials.json
+    - A cached token: run `verified-googledocs-mcp auth` first.
 
 Usage:
     uv run python scripts/capture_fixtures.py <DOCUMENT_ID> --name scratch_multitab
@@ -22,8 +22,8 @@ import argparse
 import json
 from pathlib import Path
 
-from googledocs_mcp.auth import get_credentials
-from googledocs_mcp.docs import build_docs_service
+from verified_googledocs_mcp.auth import get_credentials
+from verified_googledocs_mcp.docs import build_docs_service
 
 # Pin one suggestions view so captured indices match what the locator expects.
 SUGGESTIONS_VIEW_MODE = "SUGGESTIONS_INLINE"

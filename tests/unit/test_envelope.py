@@ -4,7 +4,7 @@ import dataclasses
 
 import pytest
 
-from googledocs_mcp.verify import (
+from verified_googledocs_mcp.verify import (
     ErrorCode,
     ErrorEnvelope,
     VerifyError,
