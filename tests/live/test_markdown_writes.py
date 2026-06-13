@@ -224,12 +224,6 @@ class TestInsertImage:
         )
         assert r.data["applied"] is True
 
-    @pytest.mark.xfail(
-        reason="#38 — insert_image creates an intermediate empty paragraph, so the image lands "
-        "two paragraphs after the anchor while _inline_object_near checks only one. The image "
-        "IS inserted; inline_object_confirmed false-negatives.",
-        strict=False,
-    )
     async def test_inline_object_confirmed_evidence(self, client, scratch_doc):
         r = await client.call_tool(
             "insert_image",

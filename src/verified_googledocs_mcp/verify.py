@@ -922,7 +922,13 @@ def assemble_structural_evidence(
 
 
 def _inline_object_near(body: dict[str, Any], anchor_para_start: int) -> bool:
-    """Return True if the paragraph after the anchor contains an inline image."""
+    """Return True if an inline image exists at or after the anchor paragraph.
+
+    Scans paragraphs following the anchor, skipping empty/whitespace-only ones.
+    This handles the #38 case where execute_insert_image inserts a newline at the
+    anchor's paragraph end (creating an intermediate empty paragraph) before the
+    image paragraph, so the image lands two paragraphs after the anchor.
+    """
     content = body.get("content", [])
     found_anchor = False
     for elem in content:
@@ -935,8 +941,14 @@ def _inline_object_near(body: dict[str, Any], anchor_para_start: int) -> bool:
                 found_anchor = True
             continue
         para = elem["paragraph"]
-        for inline in para.get("elements", []):
-            if "inlineObjectElement" in inline:
-                return True
+        # Check for inline object first.
+        if any("inlineObjectElement" in e for e in para.get("elements", [])):
+            return True
+        # Skip intermediate empty/whitespace-only paragraphs (#38: intermediate
+        # empty paragraph created between anchor and image paragraph).
+        text = "".join(e.get("textRun", {}).get("content", "") for e in para.get("elements", []))
+        if text.strip() == "":
+            continue
+        # Non-empty paragraph with no inline object — image is not adjacent.
         return False
     return False
