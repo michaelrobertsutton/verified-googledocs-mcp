@@ -18,7 +18,16 @@ from typing import Any, Literal
 from fastmcp import FastMCP
 
 from .auth import get_credentials
+from .comments import (
+    build_drive_service,
+    execute_add_anchored_comment,
+    execute_reply_to_comment,
+    execute_resolve_comment,
+    get_comment_thread,
+    list_comments,
+)
 from .docs import (
+    _available_tab_ids,
     build_docs_service,
     fetch_document,
     find_sections_in,
@@ -26,6 +35,7 @@ from .docs import (
     read_tab,
 )
 from .middleware import EvidenceEnforcementMiddleware
+from .suggestions import extract_suggestions
 from .verify import VerifyError
 
 mcp = FastMCP(
@@ -203,6 +213,201 @@ def replace_text(
     except VerifyError as exc:
         # Surface the typed envelope as the MCP tool error payload so the
         # caller receives structured diagnostics rather than a bare string.
+        from fastmcp.exceptions import ToolError
+
+        raise ToolError(str(exc.envelope.to_dict())) from exc
+
+
+# ---------------------------------------------------------------------------
+# Tool: list_open_items
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def list_open_items(doc_id: str, tab_id: str = "") -> dict[str, Any]:
+    """List all open comments and pending suggested edits on a document.
+
+    Use this tool when you need a single unified view of all open review
+    items on a document.  Returns both Drive-level comments (labeled
+    scope='document') and per-tab suggested edits in one response.
+
+    Comments come from the Drive API and cannot be attributed to a specific
+    tab — Drive comment anchors are opaque.  If tab_id is provided it filters
+    the suggestions returned to that tab only; if omitted all tabs are included.
+    Comments are always returned document-wide regardless of tab_id.
+
+    Suggestions are extracted from the raw Docs JSON (suggestedInsertionIds /
+    suggestedDeletionIds / suggestedTextStyleChanges) and are per-tab.  The
+    document is fetched with suggestionsViewMode=SUGGESTIONS_INLINE so that
+    suggestion fields are populated.
+    """
+    credentials = get_credentials()
+    docs_service = build_docs_service(credentials)
+    drive_service = build_drive_service(credentials)
+
+    # Comments: doc-level from Drive.
+    open_comments = list_comments(drive_service, doc_id)
+
+    # Suggestions: per-tab from Docs JSON with SUGGESTIONS_INLINE.
+    doc = (
+        docs_service.documents()
+        .get(documentId=doc_id, includeTabsContent=True, suggestionsViewMode="SUGGESTIONS_INLINE")
+        .execute(num_retries=3)
+    )
+
+    if tab_id:
+        suggestions = extract_suggestions(doc, tab_id)
+    else:
+        all_suggestions: list[dict[str, Any]] = []
+        for tid in _available_tab_ids(doc):
+            try:
+                all_suggestions.extend(extract_suggestions(doc, tid))
+            except ValueError:
+                pass
+        suggestions = all_suggestions
+
+    return {
+        "doc_id": doc_id,
+        "open_comments": open_comments,
+        "pending_suggestions": suggestions,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool: get_comment_thread
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def get_comment_thread_tool(doc_id: str, comment_id: str) -> dict[str, Any]:
+    """Retrieve the full reply chain for a comment.
+
+    Use this tool when you need to read a comment thread in full before
+    deciding on a response or resolution.  Returns the comment content,
+    all replies, quoted text, resolved status, and author.
+
+    Requires both the doc_id (the Google Doc's file ID) and the comment_id
+    from the Drive API.
+    """
+    credentials = get_credentials()
+    drive_service = build_drive_service(credentials)
+    return get_comment_thread(drive_service, doc_id, comment_id)
+
+
+# ---------------------------------------------------------------------------
+# Tool: add_anchored_comment
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def add_anchored_comment(doc_id: str, tab_id: str, quote: str, body: str) -> dict[str, Any]:
+    """Add a comment to a document, validated against a quoted passage.
+
+    Use this tool when you need to create a comment on specific text in a
+    document tab.  The quote must exist in the tab — the tool locates it via
+    the same normalization ladder as replace_text and returns QUOTE_NOT_FOUND
+    with nearest candidate anchors if the quote is absent.
+
+    NOTE: The Drive API may render the created comment as document-level even
+    when quotedFileContent is supplied.  This behaviour is pending confirmation
+    from a live anchoring spike; for now the comment is created with the quote
+    embedded in its content and the tool returns comment-state evidence.
+
+    Returns comment-state evidence: applied, comment_id, resolved, reply_count,
+    content, quoted_text, audit_logged.
+
+    Errors:
+      QUOTE_NOT_FOUND  – quote not found in the tab; nearest candidates listed
+      INVALID_INPUT    – empty body or quote
+      TAB_NOT_FOUND    – tab_id not in document
+    """
+    credentials = get_credentials()
+    docs_service = build_docs_service(credentials)
+    drive_service = build_drive_service(credentials)
+    try:
+        return execute_add_anchored_comment(
+            drive_service=drive_service,
+            docs_service=docs_service,
+            doc_id=doc_id,
+            tab_id=tab_id,
+            quote=quote,
+            body=body,
+        )
+    except VerifyError as exc:
+        from fastmcp.exceptions import ToolError
+
+        raise ToolError(str(exc.envelope.to_dict())) from exc
+
+
+# ---------------------------------------------------------------------------
+# Tool: reply_to_comment
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def reply_to_comment(doc_id: str, comment_id: str, body: str) -> dict[str, Any]:
+    """Add a reply to an existing comment thread.
+
+    Use this tool when you need to respond to a reviewer comment without
+    resolving it.  The reply is added to the thread and the tool re-queries
+    the comment to return post-state evidence.
+
+    Returns comment-state evidence: applied, comment_id, resolved, reply_count,
+    content, quoted_text, audit_logged.
+
+    Errors:
+      INVALID_INPUT  – empty body or comment not found
+    """
+    credentials = get_credentials()
+    drive_service = build_drive_service(credentials)
+    try:
+        return execute_reply_to_comment(
+            drive_service=drive_service,
+            doc_id=doc_id,
+            comment_id=comment_id,
+            body=body,
+        )
+    except VerifyError as exc:
+        from fastmcp.exceptions import ToolError
+
+        raise ToolError(str(exc.envelope.to_dict())) from exc
+
+
+# ---------------------------------------------------------------------------
+# Tool: resolve_comment
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def resolve_comment(doc_id: str, comment_id: str) -> dict[str, Any]:
+    """Resolve a comment on a document and verify the resolution landed.
+
+    Use this tool when you need to mark a reviewer comment as resolved.
+    Resolves via Drive replies.create(action='resolve') — the only mechanism
+    that actually resolves comments in Drive API v3.  Using comments.update
+    with resolved=true is silently ignored (resolved is a read-only field),
+    which is the incumbent server's bug.
+
+    After issuing the resolve the tool re-queries the comment and returns
+    the actual final state.  A comment that is still open after the resolve
+    attempt is reported as COMMENT_STILL_OPEN — never as success.
+
+    Returns comment-state evidence: applied, comment_id, resolved, reply_count,
+    content, quoted_text, audit_logged.
+
+    Errors:
+      COMMENT_STILL_OPEN  – comment did not resolve; post-state included
+      INVALID_INPUT       – comment not found
+    """
+    credentials = get_credentials()
+    drive_service = build_drive_service(credentials)
+    try:
+        return execute_resolve_comment(
+            drive_service=drive_service,
+            doc_id=doc_id,
+            comment_id=comment_id,
+        )
+    except VerifyError as exc:
         from fastmcp.exceptions import ToolError
 
         raise ToolError(str(exc.envelope.to_dict())) from exc
