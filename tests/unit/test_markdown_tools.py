@@ -513,6 +513,43 @@ class TestAppendMarkdown:
         assert result.is_error
         assert "TAB_NOT_FOUND" in str(result.content)
 
+    @pytest.mark.asyncio
+    async def test_append_opens_fresh_paragraph_before_content(self) -> None:
+        """Fix #37: the first request must be a newline at insert_at, and compiled
+        content must start at insert_at+1 so appended blocks land in a fresh
+        paragraph rather than fusing with the existing trailing paragraph.
+
+        The rendered no-fusion outcome is covered by the live test (network-gated).
+        """
+        # simple_markdown_doc("Hello world") → paragraph "Hello world\n" at [1,13)
+        # tab_end=13, insert_at=max(1,13-1)=12, content_start=13
+        pre = simple_markdown_doc("Hello world", revision="rev-1")
+        post = simple_markdown_doc("Hello world", revision="rev-2")
+        patchers, mock_service = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "append_markdown",
+                    {
+                        "doc_id": "doc-test",
+                        "tab_id": "tab-1",
+                        "markdown": "## Appended",
+                    },
+                )
+        assert not result.is_error
+
+        call_args = mock_service.documents.return_value.batchUpdate.call_args
+        sent_requests = call_args.kwargs["body"]["requests"]
+
+        # The leading newline must be the very first request, at insert_at=12.
+        first = sent_requests[0]
+        assert first["insertText"]["text"] == "\n"
+        assert first["insertText"]["location"]["index"] == 12
+
+        # The first compiled request (heading insertText) must target content_start=13.
+        insert_text_requests = [r for r in sent_requests[1:] if "insertText" in r]
+        assert insert_text_requests[0]["insertText"]["location"]["index"] == 13
+
 
 # ---------------------------------------------------------------------------
 # insert_image

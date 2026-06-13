@@ -506,16 +506,29 @@ def execute_append_markdown(
     _, tab_end = _tab_extent(body)
     # Append inserts before the final newline to avoid the trailing-newline constraint.
     insert_at = max(1, tab_end - 1)
+    # Fix #37: open a fresh paragraph by inserting a newline first, then place
+    # compiled markdown after it. Mirrors the pattern in execute_insert_image.
+    content_start = insert_at + 1
 
     # --- Compile markdown ----------------------------------------------------
     try:
-        compiled_requests = compile_markdown(markdown, start_index=insert_at)
+        compiled_requests = compile_markdown(markdown, start_index=content_start)
     except UnsupportedMarkdown as exc:
         raise _make_error(
             ErrorCode.UNSUPPORTED_MARKDOWN,
             str(exc),
             {"construct": exc.construct, "source_map": exc.source_map},
         ) from exc
+
+    # Build the leading newline request and prepend it so the appended content
+    # starts in a fresh paragraph rather than fusing with the trailing one (#37).
+    newline_request: dict[str, Any] = {
+        "insertText": {
+            "location": {"index": insert_at, "tabId": tab_id},
+            "text": "\n",
+        }
+    }
+    requests: list[dict[str, Any]] = [newline_request, *compiled_requests]
 
     # --- Dry run -------------------------------------------------------------
     if dry_run:
@@ -524,7 +537,7 @@ def execute_append_markdown(
             "revision_before": revision_before,
             "revision_after": "",
             "dry_run": True,
-            "planned_requests": len(compiled_requests),
+            "planned_requests": len(requests),
             "insert_at": insert_at,
             "audit_logged": False,
         }
@@ -532,7 +545,7 @@ def execute_append_markdown(
 
     # --- batchUpdate ---------------------------------------------------------
     body_payload: dict[str, Any] = {
-        "requests": compiled_requests,
+        "requests": requests,
         "writeControl": {"requiredRevisionId": revision_before},
     }
 
@@ -551,8 +564,10 @@ def execute_append_markdown(
     post_body = _find_tab_body(post_doc, tab_id) or {}
 
     # --- Assemble evidence ---------------------------------------------------
+    # Use content_start (not insert_at) so the evidence window excludes the
+    # original trailing paragraph and covers only the newly appended content.
     approx_end = (
-        insert_at
+        content_start
         + sum(
             len(r.get("insertText", {}).get("text", ""))
             for r in compiled_requests
@@ -563,7 +578,7 @@ def execute_append_markdown(
     evidence = assemble_range_markdown_evidence(
         input_markdown=markdown,
         post_body=post_body,
-        start_index=insert_at,
+        start_index=content_start,
         end_index=approx_end,
         revision_before=revision_before,
         revision_after=revision_after,
