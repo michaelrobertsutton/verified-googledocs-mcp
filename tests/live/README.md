@@ -54,10 +54,8 @@ Override the fixture document with `VERIFIED_GOOGLEDOCS_MCP_TEST_DOC=<doc_id>`.
 | `test_cross_cutting.py` | §6 middleware, audit log, auth, input validation, unknown tab |
 | `test_workflows.py` | §8 comment-resolution cycle, markdown sync round trip |
 
-## Known divergences
+## Status
 
-Found by this pass and filed as follow-ups. **#28, #29, #30, #31, #36, #37, #38
-are fixed.** One `xfail` remains and flips to passing once fixed: **#43**
-(`replace_range_markdown` `structural_match` re-export slice over-captures
-adjacent paragraphs — the write is correct, only the evidence over-reports). See
-`docs/acceptance-report.md` for the full matrix.
+**Gate met:** `pytest --run-live` → 57 passed, 0 xfailed, 0 skipped. Every
+divergence this pass found (#28, #29, #30, #31, #36, #37, #38, #43) has been
+fixed. See `docs/acceptance-report.md` for the full matrix.
