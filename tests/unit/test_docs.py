@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from googledocs_mcp.docs import (
+from verified_googledocs_mcp.docs import (
     IMPLICIT_TAB_ID,
     find_sections_in,
     list_tabs_from,

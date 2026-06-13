@@ -6,7 +6,7 @@ import os
 import stat
 from pathlib import Path
 
-from googledocs_mcp.verify import append_audit
+from verified_googledocs_mcp.verify import append_audit
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ class TestAuditHappyPath:
         )
         assert ok is True
         assert reason == ""
-        audit_file = tmp_path / "googledocs-mcp" / "audit.jsonl"
+        audit_file = tmp_path / "verified-googledocs-mcp" / "audit.jsonl"
         assert audit_file.exists()
 
     def test_record_shape(self, tmp_path, monkeypatch):
@@ -51,7 +51,7 @@ class TestAuditHappyPath:
             tool="replace_text",
             evidence={"before": "a", "after": "b", "match_count": 1},
         )
-        records = _read_audit(tmp_path / "googledocs-mcp" / "audit.jsonl")
+        records = _read_audit(tmp_path / "verified-googledocs-mcp" / "audit.jsonl")
         assert len(records) == 1
         rec = records[0]
         assert rec["doc"] == "doc-abc"
@@ -64,7 +64,7 @@ class TestAuditHappyPath:
     def test_timestamp_is_iso8601_utc(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
         append_audit(doc="d", tab="t", tool="x", evidence={})
-        records = _read_audit(tmp_path / "googledocs-mcp" / "audit.jsonl")
+        records = _read_audit(tmp_path / "verified-googledocs-mcp" / "audit.jsonl")
         ts = records[0]["timestamp"]
         # Should end with +00:00 or Z (Python datetime.isoformat with utc).
         assert ts.endswith("+00:00") or ts.endswith("Z")
@@ -73,7 +73,7 @@ class TestAuditHappyPath:
         monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
         for i in range(3):
             append_audit(doc=f"d{i}", tab="t", tool="replace_text", evidence={"n": i})
-        records = _read_audit(tmp_path / "googledocs-mcp" / "audit.jsonl")
+        records = _read_audit(tmp_path / "verified-googledocs-mcp" / "audit.jsonl")
         assert len(records) == 3
         assert [r["doc"] for r in records] == ["d0", "d1", "d2"]
 
@@ -85,7 +85,7 @@ class TestAuditHappyPath:
         monkeypatch.setenv("HOME", str(home))
         # Need to also patch Path.home() if it doesn't pick up $HOME.
         # On macOS, Path.home() reads /etc/passwd, not $HOME, so patch it directly.
-        import googledocs_mcp.verify as verify_mod
+        import verified_googledocs_mcp.verify as verify_mod
 
         def patched_state_dir():
             xdg = os.environ.get("XDG_STATE_HOME", "")
@@ -93,19 +93,19 @@ class TestAuditHappyPath:
                 base = Path(xdg)
             else:
                 base = home / ".local" / "state"
-            return base / "googledocs-mcp"
+            return base / "verified-googledocs-mcp"
 
         monkeypatch.setattr(verify_mod, "_state_dir", patched_state_dir)
         ok, _ = append_audit(doc="d", tab="t", tool="t", evidence={})
         assert ok is True
-        assert (home / ".local" / "state" / "googledocs-mcp" / "audit.jsonl").exists()
+        assert (home / ".local" / "state" / "verified-googledocs-mcp" / "audit.jsonl").exists()
 
     def test_creates_directory_on_demand(self, tmp_path, monkeypatch):
         nested = tmp_path / "a" / "b" / "c"
         monkeypatch.setenv("XDG_STATE_HOME", str(nested))
         ok, _ = append_audit(doc="d", tab="t", tool="x", evidence={})
         assert ok is True
-        assert (nested / "googledocs-mcp" / "audit.jsonl").exists()
+        assert (nested / "verified-googledocs-mcp" / "audit.jsonl").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +123,7 @@ class TestAuditExcerptsRedaction:
             evidence={"before": "sensitive content here", "after": "also sensitive"},
             audit_excerpts=False,
         )
-        records = _read_audit(tmp_path / "googledocs-mcp" / "audit.jsonl")
+        records = _read_audit(tmp_path / "verified-googledocs-mcp" / "audit.jsonl")
         ev = records[0]["evidence"]
         assert "sensitive" not in ev["before"]
         assert "sensitive" not in ev["after"]
@@ -144,7 +144,7 @@ class TestAuditExcerptsRedaction:
             },
             audit_excerpts=False,
         )
-        records = _read_audit(tmp_path / "googledocs-mcp" / "audit.jsonl")
+        records = _read_audit(tmp_path / "verified-googledocs-mcp" / "audit.jsonl")
         ev = records[0]["evidence"]
         assert ev["match_count"] == 1
         assert ev["rung"] == "exact"
@@ -158,7 +158,7 @@ class TestAuditExcerptsRedaction:
             evidence={"before": "keep this", "after": "and this"},
             audit_excerpts=True,
         )
-        records = _read_audit(tmp_path / "googledocs-mcp" / "audit.jsonl")
+        records = _read_audit(tmp_path / "verified-googledocs-mcp" / "audit.jsonl")
         ev = records[0]["evidence"]
         assert ev["before"] == "keep this"
         assert ev["after"] == "and this"
@@ -173,7 +173,7 @@ class TestAuditExcerptsRedaction:
             evidence={"before": content},
             audit_excerpts=False,
         )
-        records = _read_audit(tmp_path / "googledocs-mcp" / "audit.jsonl")
+        records = _read_audit(tmp_path / "verified-googledocs-mcp" / "audit.jsonl")
         before_val = records[0]["evidence"]["before"]
         # Should mention the character count.
         assert "100" in before_val
@@ -189,7 +189,7 @@ class TestAuditFailurePolicy:
         # Point XDG_STATE_HOME at a path whose parent is a file (unwritable).
         bad_parent = tmp_path / "i_am_a_file"
         bad_parent.write_text("block")
-        # The state dir would be bad_parent/googledocs-mcp — impossible to create.
+        # The state dir would be bad_parent/verified-googledocs-mcp — impossible to create.
         monkeypatch.setenv("XDG_STATE_HOME", str(bad_parent))
         ok, reason = append_audit(doc="d", tab="t", tool="t", evidence={})
         assert ok is False
@@ -208,7 +208,7 @@ class TestAuditFailurePolicy:
     def test_read_only_file_returns_false(self, tmp_path, monkeypatch):
         """If the audit.jsonl file exists but is read-only, return False."""
         monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-        state_dir = tmp_path / "googledocs-mcp"
+        state_dir = tmp_path / "verified-googledocs-mcp"
         state_dir.mkdir(parents=True)
         audit_file = state_dir / "audit.jsonl"
         audit_file.write_text("")

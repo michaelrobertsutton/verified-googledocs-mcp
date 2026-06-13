@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from googledocs_mcp.comments import (
+from verified_googledocs_mcp.comments import (
     _format_comment,
     assemble_comment_state_evidence,
     execute_add_anchored_comment,
@@ -29,7 +29,7 @@ from googledocs_mcp.comments import (
     execute_resolve_comment,
     get_comment_thread,
 )
-from googledocs_mcp.verify import ErrorCode, VerifyError
+from verified_googledocs_mcp.verify import ErrorCode, VerifyError
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +282,7 @@ class TestResolveComment:
         resolved_raw = _raw_comment(resolved=True)
         drive_svc = _make_drive_service(comment=resolved_raw, re_query_comment=resolved_raw)
         with patch(
-            "googledocs_mcp.comments.append_audit",
+            "verified_googledocs_mcp.comments.append_audit",
             return_value=(False, "disk full"),
         ):
             evidence = execute_resolve_comment(
@@ -374,7 +374,7 @@ class TestAddAnchoredComment:
         docs_svc = self._mock_docs(doc)
         drive_svc = self._mock_drive(_raw_comment())
 
-        with patch("googledocs_mcp.comments.fetch_document", return_value=doc):
+        with patch("verified_googledocs_mcp.comments.fetch_document", return_value=doc):
             with pytest.raises(VerifyError) as exc_info:
                 execute_add_anchored_comment(
                     drive_service=drive_svc,
@@ -391,7 +391,7 @@ class TestAddAnchoredComment:
         docs_svc = self._mock_docs(doc)
         drive_svc = self._mock_drive(_raw_comment())
 
-        with patch("googledocs_mcp.comments.fetch_document", return_value=doc):
+        with patch("verified_googledocs_mcp.comments.fetch_document", return_value=doc):
             with pytest.raises(VerifyError) as exc_info:
                 execute_add_anchored_comment(
                     drive_service=drive_svc,
@@ -411,7 +411,7 @@ class TestAddAnchoredComment:
         comment_raw = _raw_comment(comment_id="c-new", quoted="the quick brown fox")
         drive_svc = self._mock_drive(comment_raw)
 
-        with patch("googledocs_mcp.comments.fetch_document", return_value=doc):
+        with patch("verified_googledocs_mcp.comments.fetch_document", return_value=doc):
             evidence = execute_add_anchored_comment(
                 drive_service=drive_svc,
                 docs_service=docs_svc,
@@ -457,7 +457,7 @@ class TestAddAnchoredComment:
         docs_svc = self._mock_docs(doc)
         drive_svc = self._mock_drive(_raw_comment())
 
-        with patch("googledocs_mcp.comments.fetch_document", return_value=doc):
+        with patch("verified_googledocs_mcp.comments.fetch_document", return_value=doc):
             with pytest.raises(VerifyError) as exc_info:
                 execute_add_anchored_comment(
                     drive_service=drive_svc,

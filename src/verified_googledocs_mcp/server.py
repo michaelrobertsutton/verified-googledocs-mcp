@@ -2,12 +2,12 @@
 
 Auth never runs here. MCP clients spawn this process headless. If no valid
 token exists, the first tool call fails fast with a clear instruction to run
-`googledocs-mcp auth`.
+`verified-googledocs-mcp auth`.
 
 Entry point dispatch
 --------------------
-  googledocs-mcp            → start the stdio MCP server
-  googledocs-mcp auth       → run the OAuth flow (terminal, not headless)
+  verified-googledocs-mcp            → start the stdio MCP server
+  verified-googledocs-mcp auth       → run the OAuth flow (terminal, not headless)
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ from .markdown_mutations import (
 from .verify import VerifyError
 
 mcp = FastMCP(
-    "googledocs-mcp",
+    "verified-googledocs-mcp",
     instructions=(
         "MCP server for Google Docs with tab-scoped reads and verified writes. "
         "Every tool requires an explicit tab_id obtained from list_tabs. "
@@ -672,10 +672,10 @@ def _get_service() -> Any:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """Entry point for the `googledocs-mcp` command.
+    """Entry point for the `verified-googledocs-mcp` command.
 
-    `googledocs-mcp auth`  — run the OAuth flow in the terminal.
-    `googledocs-mcp`       — start the stdio MCP server.
+    `verified-googledocs-mcp auth`  — run the OAuth flow in the terminal.
+    `verified-googledocs-mcp`       — start the stdio MCP server.
     """
     if len(sys.argv) > 1 and sys.argv[1] == "auth":
         from .auth import run_auth_flow

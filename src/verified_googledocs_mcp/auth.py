@@ -1,16 +1,16 @@
-"""OAuth flow and token cache for googledocs-mcp.
+"""OAuth flow and token cache for verified-googledocs-mcp.
 
 Auth never runs inside the stdio server process. MCP clients spawn the server
 headless (no TTY) with tool timeouts that a browser consent flow would blow
-through. The `googledocs-mcp auth` entry point runs the flow in a dedicated
+through. The `verified-googledocs-mcp auth` entry point runs the flow in a dedicated
 terminal session *before* the server is added to client configuration.
 
 Credential and token paths
 --------------------------
-Client secret:  ~/.config/googledocs-mcp/credentials.json
-                Override: env var GOOGLEDOCS_MCP_CREDENTIALS
+Client secret:  ~/.config/verified-googledocs-mcp/credentials.json
+                Override: env var VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS
 
-Token cache:    ~/.config/googledocs-mcp/token.json
+Token cache:    ~/.config/verified-googledocs-mcp/token.json
                 (auto-refreshed; never commit this file)
 
 Scopes
@@ -34,13 +34,13 @@ SCOPES: list[str] = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-_CONFIG_DIR = Path.home() / ".config" / "googledocs-mcp"
+_CONFIG_DIR = Path.home() / ".config" / "verified-googledocs-mcp"
 _DEFAULT_CREDENTIALS = _CONFIG_DIR / "credentials.json"
 _DEFAULT_TOKEN = _CONFIG_DIR / "token.json"
 
 
 def _credentials_path() -> Path:
-    env = os.environ.get("GOOGLEDOCS_MCP_CREDENTIALS")
+    env = os.environ.get("VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS")
     if env:
         return Path(env)
     return _DEFAULT_CREDENTIALS
@@ -54,7 +54,7 @@ def run_auth_flow() -> None:
     """Run the installed-app OAuth flow and cache the resulting token.
 
     Prints the authorization URL and waits for the user to complete the flow
-    in their browser. Saves the token to ~/.config/googledocs-mcp/token.json.
+    in their browser. Saves the token to ~/.config/verified-googledocs-mcp/token.json.
 
     Exits with a clear error if credentials.json is not found.
     """
@@ -64,7 +64,7 @@ def run_auth_flow() -> None:
             f"Credentials file not found: {cred_path}\n"
             "Download your OAuth client secret from the Google Cloud Console\n"
             f"and save it to {_DEFAULT_CREDENTIALS}\n"
-            f"(or set GOOGLEDOCS_MCP_CREDENTIALS to its path)."
+            f"(or set VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS to its path)."
         )
 
     flow = InstalledAppFlow.from_client_secrets_file(str(cred_path), SCOPES)
@@ -79,14 +79,14 @@ def run_auth_flow() -> None:
 def get_credentials() -> Credentials:
     """Return valid OAuth credentials, refreshing the token if needed.
 
-    Raises RuntimeError with a clear "run `googledocs-mcp auth` first" message
+    Raises RuntimeError with a clear "run `verified-googledocs-mcp auth` first" message
     when no valid token exists. The server calls this before any tool runs;
     failure here is fast and diagnosed rather than a silent 401 later.
     """
     token_path = _token_path()
     if not token_path.exists():
         raise RuntimeError(
-            "No token found. Run `googledocs-mcp auth` to authorize the server, "
+            "No token found. Run `verified-googledocs-mcp auth` to authorize the server, "
             f"then retry. (Expected token at {token_path})"
         )
 
@@ -98,14 +98,14 @@ def get_credentials() -> Credentials:
                 credentials.refresh(Request())
             except RefreshError as exc:
                 raise RuntimeError(
-                    "Token refresh failed. Run `googledocs-mcp auth` to re-authorize. "
+                    "Token refresh failed. Run `verified-googledocs-mcp auth` to re-authorize. "
                     f"(Detail: {exc})"
                 ) from exc
             # Persist the refreshed token.
             token_path.write_text(credentials.to_json())
         else:
             raise RuntimeError(
-                "Stored token is invalid. Run `googledocs-mcp auth` to re-authorize."
+                "Stored token is invalid. Run `verified-googledocs-mcp auth` to re-authorize."
             )
 
     return credentials

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from googledocs_mcp.verify import (
+from verified_googledocs_mcp.verify import (
     _blocks_structurally_equal,
     _parse_markdown_blocks,
     assemble_range_markdown_evidence,

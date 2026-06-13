@@ -1,4 +1,4 @@
-# googledocs-mcp
+# verified-googledocs-mcp
 
 An MCP server for Google Docs whose writes carry proof. Every mutating tool re-reads the affected content from the document after it writes and returns evidence of what actually changed: before/after excerpts, the match count, and the document revision before and after. A tool never reports success for an edit that did not land.
 
@@ -95,7 +95,7 @@ Built incrementally; each tool ships with its verification and tests rather than
 
 | Area | State |
 |------|-------|
-| OAuth (`googledocs-mcp auth`), token cache | done |
+| OAuth (`verified-googledocs-mcp auth`), token cache | done |
 | `read_document`, `list_tabs`, `find_sections` | done |
 | Verification kernel (locator, error envelope, audit) | done |
 | `replace_text` (verified) + enforcement middleware | done |
@@ -112,29 +112,29 @@ The server talks to Google with your own OAuth credentials. One-time setup:
 
 1. Create a Google Cloud project and enable the **Google Docs API** and **Google Drive API**.
 2. Configure the OAuth consent screen (External, Testing) and add your Google account as a test user.
-3. Create an OAuth client ID of type **Desktop app** and download the client secret to `~/.config/googledocs-mcp/credentials.json`.
+3. Create an OAuth client ID of type **Desktop app** and download the client secret to `~/.config/verified-googledocs-mcp/credentials.json`.
 4. Authorize once, in a terminal:
 
    ```bash
-   uv run googledocs-mcp auth
+   uv run verified-googledocs-mcp auth
    ```
 
-   This opens a browser, completes consent, and caches a refreshable token at `~/.config/googledocs-mcp/token.json`. Auth runs only here, never inside the server, because MCP clients start the server headless.
+   This opens a browser, completes consent, and caches a refreshable token at `~/.config/verified-googledocs-mcp/token.json`. Auth runs only here, never inside the server, because MCP clients start the server headless.
 
 Then register the server with your MCP client. Most clients use the standard `mcpServers` config block:
 
 ```jsonc
 {
   "mcpServers": {
-    "googledocs": {
+    "verified-googledocs": {
       "command": "uv",
-      "args": ["run", "googledocs-mcp"]
+      "args": ["run", "verified-googledocs-mcp"]
     }
   }
 }
 ```
 
-The server uses the `documents` and `drive` scopes (comments require Drive). The credentials path is overridable with `GOOGLEDOCS_MCP_CREDENTIALS`.
+The server uses the `documents` and `drive` scopes (comments require Drive). The credentials path is overridable with `VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS`.
 
 ## Error codes
 
@@ -153,7 +153,7 @@ Failures return a typed envelope (`error_code`, `message`, `diagnostics`, `retry
 | `COMMENT_STILL_OPEN` | A resolve was requested but re-query shows the comment open |
 | `INVALID_INPUT` | Empty or contradictory arguments |
 | `IMAGE_SOURCE_UNSUPPORTED` | Image source is a local path; a fetchable URL is required |
-| `AUTH_EXPIRED` | No valid token; run `googledocs-mcp auth` |
+| `AUTH_EXPIRED` | No valid token; run `verified-googledocs-mcp auth` |
 
 ## Development
 

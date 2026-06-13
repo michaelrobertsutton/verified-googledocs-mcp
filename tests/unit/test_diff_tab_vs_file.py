@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastmcp import Client
 
-from googledocs_mcp.server import mcp
+from verified_googledocs_mcp.server import mcp
 
 
 # ---------------------------------------------------------------------------
@@ -85,10 +85,10 @@ def _mock_fetch_doc(doc: dict[str, Any]):
         return doc
 
     return [
-        patch("googledocs_mcp.server.get_credentials", _fake_get_creds),
-        patch("googledocs_mcp.server.build_docs_service", _fake_build_service),
-        patch("googledocs_mcp.server.fetch_document", _fake_fetch),
-        patch("googledocs_mcp.markdown_mutations.fetch_document", _fake_fetch),
+        patch("verified_googledocs_mcp.server.get_credentials", _fake_get_creds),
+        patch("verified_googledocs_mcp.server.build_docs_service", _fake_build_service),
+        patch("verified_googledocs_mcp.server.fetch_document", _fake_fetch),
+        patch("verified_googledocs_mcp.markdown_mutations.fetch_document", _fake_fetch),
     ]
 
 
@@ -218,6 +218,6 @@ class TestDiffTabVsFile:
     @pytest.mark.asyncio
     async def test_diff_is_not_read_only_blocked(self) -> None:
         """diff_tab_vs_file is a READ tool and should not be in MUTATING_TOOLS."""
-        from googledocs_mcp.middleware import MUTATING_TOOLS
+        from verified_googledocs_mcp.middleware import MUTATING_TOOLS
 
         assert "diff_tab_vs_file" not in MUTATING_TOOLS

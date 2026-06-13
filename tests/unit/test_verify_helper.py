@@ -5,7 +5,7 @@ Pure unit tests; no network or credentials.
 
 from __future__ import annotations
 
-from googledocs_mcp.verify import (
+from verified_googledocs_mcp.verify import (
     LocateResult,
     RUNG_EXACT,
     assemble_text_edit_evidence,
@@ -63,7 +63,7 @@ def _tab_raw(raw_texts: list[str]) -> dict:
 
 class TestU16ToCodepoint:
     def test_ascii_identity(self):
-        from googledocs_mcp.verify import _flatten_tab
+        from verified_googledocs_mcp.verify import _flatten_tab
 
         tab = _tab(["Hello world"])
         text, u16_map, _ = _flatten_tab(tab)
@@ -73,7 +73,7 @@ class TestU16ToCodepoint:
             assert recovered == cp_idx
 
     def test_astral_char_offset(self):
-        from googledocs_mcp.verify import _flatten_tab
+        from verified_googledocs_mcp.verify import _flatten_tab
 
         # 🌍 = 2 UTF-16 units; text = "🌍A"
         emoji = "\U0001F30D"

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from googledocs_mcp.suggestions import extract_suggestions
+from verified_googledocs_mcp.suggestions import extract_suggestions
 from tests.unit.fixtures.suggestions.docs_suggestions import (
     doc_mixed_suggestion_and_normal,
     doc_with_deletion,

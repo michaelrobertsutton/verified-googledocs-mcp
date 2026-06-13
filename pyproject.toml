@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "googledocs-mcp"
+name = "verified-googledocs-mcp"
 version = "0.1.0"
 description = "MCP server for Google Docs with verified writes"
 readme = "README.md"
@@ -30,9 +30,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/michaelrobertsutton/googledocs-mcp"
-Repository = "https://github.com/michaelrobertsutton/googledocs-mcp"
-Issues = "https://github.com/michaelrobertsutton/googledocs-mcp/issues"
+Homepage = "https://github.com/michaelrobertsutton/verified-googledocs-mcp"
+Repository = "https://github.com/michaelrobertsutton/verified-googledocs-mcp"
+Issues = "https://github.com/michaelrobertsutton/verified-googledocs-mcp/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -42,10 +42,10 @@ dev = [
 ]
 
 [project.scripts]
-googledocs-mcp = "googledocs_mcp.server:main"
+verified-googledocs-mcp = "verified_googledocs_mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/googledocs_mcp"]
+packages = ["src/verified_googledocs_mcp"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

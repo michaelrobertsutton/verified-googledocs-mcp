@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastmcp import Client
 
-from googledocs_mcp.server import mcp
+from verified_googledocs_mcp.server import mcp
 from tests.unit.fixtures.docs_api import (
     multi_tab_doc,
     nested_tabs_doc,
@@ -28,8 +28,8 @@ def _mock_fetch(doc: dict[str, Any]):
     def _fake_fetch(service, doc_id):
         return doc
 
-    return patch("googledocs_mcp.server.get_credentials", _fake_get_credentials), \
-           patch("googledocs_mcp.server.fetch_document", _fake_fetch)
+    return patch("verified_googledocs_mcp.server.get_credentials", _fake_get_credentials), \
+           patch("verified_googledocs_mcp.server.fetch_document", _fake_fetch)
 
 
 class TestListTabsTool:

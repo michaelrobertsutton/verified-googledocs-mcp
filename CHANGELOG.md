@@ -8,7 +8,7 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches a release.
 
 ### Added
 - OAuth installed-app flow with a refreshable token cache, exposed as the
-  `googledocs-mcp auth` terminal command.
+  `verified-googledocs-mcp auth` terminal command.
 - Read tools: `read_document`, `list_tabs`, `find_sections` (ranges stamped with
   the document revision).
 - Docs JSON to markdown converter (read direction) with placeholder tokens for
@@ -19,4 +19,4 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches a release.
 - Suggested-edit extraction from document JSON.
 - CI: ruff and pytest on every push and pull request.
 
-[Unreleased]: https://github.com/michaelrobertsutton/googledocs-mcp
+[Unreleased]: https://github.com/michaelrobertsutton/verified-googledocs-mcp

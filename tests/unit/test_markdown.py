@@ -6,7 +6,7 @@ All tests use synthetic fixture dicts; no network calls, no credentials.
 from __future__ import annotations
 
 
-from googledocs_mcp.markdown import to_markdown
+from verified_googledocs_mcp.markdown import to_markdown
 from tests.unit.fixtures.docs_api import (
     lossy_elements_doc,
     multi_tab_doc,

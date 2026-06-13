@@ -17,9 +17,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastmcp import Client
 
-from googledocs_mcp.middleware import MUTATING_TOOLS
-from googledocs_mcp.server import mcp
-from googledocs_mcp.verify import ErrorCode, _make_error
+from verified_googledocs_mcp.middleware import MUTATING_TOOLS
+from verified_googledocs_mcp.server import mcp
+from verified_googledocs_mcp.verify import ErrorCode, _make_error
 
 
 # ---------------------------------------------------------------------------
@@ -64,15 +64,15 @@ def _evidence_comment(comment_id: str = "c-1", resolved: bool = True) -> dict[st
 
 
 def _patch_credentials() -> Any:
-    return patch("googledocs_mcp.server.get_credentials", return_value=MagicMock())
+    return patch("verified_googledocs_mcp.server.get_credentials", return_value=MagicMock())
 
 
 def _patch_build_docs(svc: Any) -> Any:
-    return patch("googledocs_mcp.server.build_docs_service", return_value=svc)
+    return patch("verified_googledocs_mcp.server.build_docs_service", return_value=svc)
 
 
 def _patch_build_drive(svc: Any) -> Any:
-    return patch("googledocs_mcp.server.build_drive_service", return_value=svc)
+    return patch("verified_googledocs_mcp.server.build_drive_service", return_value=svc)
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +87,7 @@ class TestResolveCommentTool:
         evidence = _evidence_comment(resolved=True)
         with (
             _patch_credentials(),
-            patch("googledocs_mcp.server.execute_resolve_comment", return_value=evidence),
+            patch("verified_googledocs_mcp.server.execute_resolve_comment", return_value=evidence),
             _patch_build_drive(MagicMock()),
         ):
             async with Client(mcp) as client:
@@ -106,7 +106,7 @@ class TestResolveCommentTool:
             _patch_credentials(),
             _patch_build_drive(MagicMock()),
             patch(
-                "googledocs_mcp.server.execute_resolve_comment",
+                "verified_googledocs_mcp.server.execute_resolve_comment",
                 side_effect=err,
             ),
         ):
@@ -127,7 +127,7 @@ class TestResolveCommentTool:
         with (
             _patch_credentials(),
             _patch_build_drive(MagicMock()),
-            patch("googledocs_mcp.server.execute_resolve_comment", return_value=evidence),
+            patch("verified_googledocs_mcp.server.execute_resolve_comment", return_value=evidence),
         ):
             async with Client(mcp) as client:
                 result = await client.call_tool(
@@ -151,7 +151,7 @@ class TestReplyToCommentTool:
         with (
             _patch_credentials(),
             _patch_build_drive(MagicMock()),
-            patch("googledocs_mcp.server.execute_reply_to_comment", return_value=evidence),
+            patch("verified_googledocs_mcp.server.execute_reply_to_comment", return_value=evidence),
         ):
             async with Client(mcp) as client:
                 result = await client.call_tool(
@@ -167,7 +167,7 @@ class TestReplyToCommentTool:
         with (
             _patch_credentials(),
             _patch_build_drive(MagicMock()),
-            patch("googledocs_mcp.server.execute_reply_to_comment", side_effect=err),
+            patch("verified_googledocs_mcp.server.execute_reply_to_comment", side_effect=err),
         ):
             async with Client(mcp) as client:
                 result = await client.call_tool(
@@ -193,7 +193,7 @@ class TestAddAnchoredCommentTool:
             _patch_credentials(),
             _patch_build_docs(MagicMock()),
             _patch_build_drive(MagicMock()),
-            patch("googledocs_mcp.server.execute_add_anchored_comment", return_value=evidence),
+            patch("verified_googledocs_mcp.server.execute_add_anchored_comment", return_value=evidence),
         ):
             async with Client(mcp) as client:
                 result = await client.call_tool(
@@ -219,7 +219,7 @@ class TestAddAnchoredCommentTool:
             _patch_credentials(),
             _patch_build_docs(MagicMock()),
             _patch_build_drive(MagicMock()),
-            patch("googledocs_mcp.server.execute_add_anchored_comment", side_effect=err),
+            patch("verified_googledocs_mcp.server.execute_add_anchored_comment", side_effect=err),
         ):
             async with Client(mcp) as client:
                 result = await client.call_tool(
@@ -243,7 +243,7 @@ class TestAddAnchoredCommentTool:
             _patch_credentials(),
             _patch_build_docs(MagicMock()),
             _patch_build_drive(MagicMock()),
-            patch("googledocs_mcp.server.execute_add_anchored_comment", return_value=evidence),
+            patch("verified_googledocs_mcp.server.execute_add_anchored_comment", return_value=evidence),
         ):
             async with Client(mcp) as client:
                 result = await client.call_tool(

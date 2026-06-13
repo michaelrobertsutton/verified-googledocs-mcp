@@ -3,7 +3,7 @@ near-miss scan, and every UTF-16 hazard in the design spec."""
 
 import pytest
 
-from googledocs_mcp.verify import (
+from verified_googledocs_mcp.verify import (
     ErrorCode,
     VerifyError,
     locate,

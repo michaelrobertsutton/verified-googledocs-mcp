@@ -13,7 +13,7 @@ import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 
-from googledocs_mcp.middleware import EvidenceEnforcementMiddleware, MUTATING_TOOLS
+from verified_googledocs_mcp.middleware import EvidenceEnforcementMiddleware, MUTATING_TOOLS
 
 
 # ---------------------------------------------------------------------------
