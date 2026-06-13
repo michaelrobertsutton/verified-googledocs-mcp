@@ -36,6 +36,13 @@ from .docs import (
 )
 from .middleware import EvidenceEnforcementMiddleware
 from .suggestions import extract_suggestions
+from .markdown_mutations import (
+    execute_append_markdown,
+    execute_diff_tab_vs_file,
+    execute_insert_image,
+    execute_replace_range_markdown,
+    execute_replace_tab_markdown,
+)
 from .verify import VerifyError
 
 mcp = FastMCP(
@@ -406,6 +413,243 @@ def resolve_comment(doc_id: str, comment_id: str) -> dict[str, Any]:
             drive_service=drive_service,
             doc_id=doc_id,
             comment_id=comment_id,
+        )
+    except VerifyError as exc:
+        from fastmcp.exceptions import ToolError
+
+        raise ToolError(str(exc.envelope.to_dict())) from exc
+
+
+# ---------------------------------------------------------------------------
+# Tool: replace_range_markdown
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def replace_range_markdown(
+    doc_id: str,
+    tab_id: str,
+    start_index: int,
+    end_index: int,
+    computed_at_revision: str,
+    markdown: str,
+    allow_structural_loss: bool = False,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Replace a document range with compiled markdown.
+
+    Use this tool when you need to replace a section of a document with new
+    markdown content. Obtain start_index, end_index, and computed_at_revision
+    from find_sections. The range stamp is validated against the current
+    document revision — a stale stamp raises STALE_RANGE ("re-run find_sections").
+
+    The structural guardrail inventories tables, images, chips, and footnotes
+    inside the target range before writing. If the replacement markdown does
+    not account for them the write is refused unless allow_structural_loss=true.
+    A blast-radius check compares structural element counts outside the edited
+    range pre/post; any change there is a hard failure.
+
+    Set dry_run=true to validate and preview without writing.
+
+    Errors:
+      STALE_RANGE          – range stamp is outdated; re-run find_sections
+      UNSUPPORTED_MARKDOWN – markdown contains an unsupported construct
+      INVALID_INPUT        – structural guardrail refused or blast-radius violation
+      TAB_NOT_FOUND        – tab_id not in document
+      REVISION_CONFLICT    – document changed mid-call; re-read and retry
+    """
+    service = _get_service()
+    try:
+        return execute_replace_range_markdown(
+            service=service,
+            doc_id=doc_id,
+            tab_id=tab_id,
+            start_index=start_index,
+            end_index=end_index,
+            computed_at_revision=computed_at_revision,
+            markdown=markdown,
+            allow_structural_loss=allow_structural_loss,
+            dry_run=dry_run,
+        )
+    except VerifyError as exc:
+        from fastmcp.exceptions import ToolError
+
+        raise ToolError(str(exc.envelope.to_dict())) from exc
+
+
+# ---------------------------------------------------------------------------
+# Tool: replace_tab_markdown
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def replace_tab_markdown(
+    doc_id: str,
+    tab_id: str,
+    markdown: str,
+    allow_structural_loss: bool = False,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Replace the entire content of a document tab with compiled markdown.
+
+    Use this tool when you need to completely replace a tab's content with new
+    markdown. tab_id is required and must identify an existing tab.
+
+    The structural guardrail refuses writes that would silently lose tables,
+    images, chips, or footnotes unless allow_structural_loss=true.
+
+    Set dry_run=true to validate and preview without writing.
+
+    Errors:
+      UNSUPPORTED_MARKDOWN – markdown contains an unsupported construct
+      INVALID_INPUT        – structural guardrail refused
+      TAB_NOT_FOUND        – tab_id missing or not in document
+      REVISION_CONFLICT    – document changed mid-call; re-read and retry
+    """
+    service = _get_service()
+    try:
+        return execute_replace_tab_markdown(
+            service=service,
+            doc_id=doc_id,
+            tab_id=tab_id,
+            markdown=markdown,
+            allow_structural_loss=allow_structural_loss,
+            dry_run=dry_run,
+        )
+    except VerifyError as exc:
+        from fastmcp.exceptions import ToolError
+
+        raise ToolError(str(exc.envelope.to_dict())) from exc
+
+
+# ---------------------------------------------------------------------------
+# Tool: append_markdown
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def append_markdown(
+    doc_id: str,
+    tab_id: str,
+    markdown: str,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Append compiled markdown at the end of a document tab.
+
+    Use this tool when you need to add new content at the end of a tab without
+    disturbing existing content. Inserts before the final trailing newline.
+
+    Set dry_run=true to validate and preview without writing.
+
+    Errors:
+      UNSUPPORTED_MARKDOWN – markdown contains an unsupported construct
+      TAB_NOT_FOUND        – tab_id not in document
+      REVISION_CONFLICT    – document changed mid-call; re-read and retry
+    """
+    service = _get_service()
+    try:
+        return execute_append_markdown(
+            service=service,
+            doc_id=doc_id,
+            tab_id=tab_id,
+            markdown=markdown,
+            dry_run=dry_run,
+        )
+    except VerifyError as exc:
+        from fastmcp.exceptions import ToolError
+
+        raise ToolError(str(exc.envelope.to_dict())) from exc
+
+
+# ---------------------------------------------------------------------------
+# Tool: insert_image
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def insert_image(
+    doc_id: str,
+    tab_id: str,
+    anchor: str,
+    source: str,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Insert an inline image after the paragraph containing anchor text.
+
+    Use this tool when you need to add an image to a specific location in a
+    document tab. The anchor resolves via the same normalization ladder as
+    replace_text (exact → curly/straight quotes → NBSP/whitespace → soft-hyphen).
+    The image is inserted as an inline object in a new paragraph immediately
+    after the paragraph containing the resolved anchor.
+
+    source must be a publicly fetchable URL (http/https). Local file paths are
+    rejected with IMAGE_SOURCE_UNSUPPORTED — the Docs API fetches the image from
+    the URL directly and cannot access local files.
+
+    Set dry_run=true to preview the resolved anchor position without writing.
+
+    Returns structural evidence: applied, revision_before/after,
+    inline_object_confirmed (whether the post-read confirms an inline object
+    near the anchor paragraph), audit_logged.
+
+    Errors:
+      QUOTE_NOT_FOUND          – anchor not found; nearest candidates listed
+      IMAGE_SOURCE_UNSUPPORTED – source is a local path, not a URL
+      TAB_NOT_FOUND            – tab_id not in document
+      REVISION_CONFLICT        – document changed mid-call; re-read and retry
+    """
+    service = _get_service()
+    try:
+        return execute_insert_image(
+            service=service,
+            doc_id=doc_id,
+            tab_id=tab_id,
+            anchor=anchor,
+            source=source,
+            dry_run=dry_run,
+        )
+    except VerifyError as exc:
+        from fastmcp.exceptions import ToolError
+
+        raise ToolError(str(exc.envelope.to_dict())) from exc
+
+
+# ---------------------------------------------------------------------------
+# Tool: diff_tab_vs_file
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def diff_tab_vs_file(
+    doc_id: str,
+    tab_id: str,
+    file_path: str,
+) -> dict[str, Any]:
+    """Export a document tab as markdown and diff against a local file.
+
+    Use this tool when you need to compare a Google Doc tab against a local
+    markdown file. The server reads the file directly (it runs locally).
+    Returns a structured diff with tagged hunks (equal/insert/delete/replace)
+    and a unified diff string.
+
+    This is a read-only tool — it makes no changes to the document or file.
+
+    Returns:
+      doc_id, tab_id, file_path, revision_id,
+      identical (bool), hunks (list of tagged diff blocks),
+      unified_diff (unified diff string)
+
+    Errors:
+      TAB_NOT_FOUND – tab_id not in document
+      INVALID_INPUT – file not found at file_path
+    """
+    service = _get_service()
+    try:
+        return execute_diff_tab_vs_file(
+            service=service,
+            doc_id=doc_id,
+            tab_id=tab_id,
+            file_path=file_path,
         )
     except VerifyError as exc:
         from fastmcp.exceptions import ToolError
