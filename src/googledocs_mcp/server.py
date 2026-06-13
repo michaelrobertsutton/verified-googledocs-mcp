@@ -25,15 +25,21 @@ from .docs import (
     list_tabs_from,
     read_tab,
 )
+from .middleware import EvidenceEnforcementMiddleware
+from .verify import ErrorCode, VerifyError
 
 mcp = FastMCP(
     "googledocs-mcp",
     instructions=(
-        "MCP server for Google Docs with tab-scoped reads. "
+        "MCP server for Google Docs with tab-scoped reads and verified writes. "
         "Every tool requires an explicit tab_id obtained from list_tabs. "
-        "Call list_tabs first when you do not know the tab structure of a document."
+        "Call list_tabs first when you do not know the tab structure of a document. "
+        "Mutating tools (replace_text) re-read after every write and return "
+        "before/after evidence so writes cannot report false success."
     ),
 )
+
+mcp.add_middleware(EvidenceEnforcementMiddleware())
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +144,68 @@ def find_sections(
             for m in matches
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Tool: replace_text
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def replace_text(
+    doc_id: str,
+    tab_id: str,
+    find: str,
+    replace: str,
+    expected_matches: int = 1,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Replace occurrences of a text string in a Google Doc tab.
+
+    Use this tool when you need to make an exact-text substitution in a
+    document tab.  Call list_tabs first to get the tab_id, then read_document
+    to confirm the text you want to replace is present as-is.
+
+    The tool locates every occurrence of ``find`` using a normalization ladder
+    (exact → curly/straight quote equivalence → NBSP/whitespace collapse →
+    soft-hyphen strip) and refuses the write if the match count does not equal
+    ``expected_matches``.  This prevents accidental multi-replacement and
+    duplicate-sentence collapse.
+
+    Set ``dry_run=True`` to preview the operation without writing; the response
+    carries ``applied: false`` and the matched span information but makes no
+    API call.
+
+    On success the response carries before/after excerpts (±200 chars), the
+    normalization rung used, pre/post revision IDs, and ``audit_logged``.
+
+    Errors are returned as typed envelopes with ``error_code``, ``message``,
+    ``diagnostics``, and ``retryable`` so the caller can act on them precisely:
+      ZERO_MATCH          – find string not found; near-miss span included
+      MATCH_COUNT_MISMATCH – wrong number of matches; all locations listed
+      REVISION_CONFLICT   – document changed mid-call; re-read and retry
+      STRUCTURAL_BOUNDARY – match crosses a paragraph boundary
+      INVALID_INPUT       – empty find, or find equals replace
+      TAB_NOT_FOUND       – tab_id not in document; available tabs listed
+    """
+    from .mutations import execute_replace_text
+
+    service = _get_service()
+    try:
+        return execute_replace_text(
+            service=service,
+            doc_id=doc_id,
+            tab_id=tab_id,
+            find=find,
+            replace=replace,
+            expected_matches=expected_matches,
+            dry_run=dry_run,
+        )
+    except VerifyError as exc:
+        # Surface the typed envelope as the MCP tool error payload so the
+        # caller receives structured diagnostics rather than a bare string.
+        from fastmcp.exceptions import ToolError
+
+        raise ToolError(str(exc.envelope.to_dict())) from exc
 
 
 # ---------------------------------------------------------------------------
