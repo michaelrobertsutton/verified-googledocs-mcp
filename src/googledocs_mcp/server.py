@@ -26,7 +26,7 @@ from .docs import (
     read_tab,
 )
 from .middleware import EvidenceEnforcementMiddleware
-from .verify import ErrorCode, VerifyError
+from .verify import VerifyError
 
 mcp = FastMCP(
     "googledocs-mcp",
