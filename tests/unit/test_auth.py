@@ -75,9 +75,7 @@ class TestGetCredentials:
         assert token_path.read_text() == json.dumps({"refreshed": True})
         assert result is mock_creds
 
-    def test_refresh_failure_raises_with_auth_instruction(
-        self, tmp_config: Path
-    ) -> None:
+    def test_refresh_failure_raises_with_auth_instruction(self, tmp_config: Path) -> None:
         from google.auth.exceptions import RefreshError
 
         mock_creds = MagicMock()
@@ -126,9 +124,7 @@ class TestRunAuthFlow:
         with pytest.raises(SystemExit, match="custom-creds.json"):
             auth_module.run_auth_flow()
 
-    def test_flow_saves_token(
-        self, tmp_config: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_flow_saves_token(self, tmp_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When credentials.json exists, flow runs and token is saved."""
         cred_path = tmp_config / "credentials.json"
         cred_path.write_text('{"installed": {}}')
@@ -159,9 +155,7 @@ class TestCredentialsPath:
         path = auth_module._credentials_path()
         assert str(path) == "/tmp/my-creds.json"
 
-    def test_env_var_cleared_restores_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_var_cleared_restores_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS", raising=False)
         path = auth_module._credentials_path()
         assert path.name == "credentials.json"

@@ -212,8 +212,15 @@ class TestAssembleRangeMarkdownEvidence:
             applied=True,
             audit_logged=True,
         )
-        for key in ("applied", "revision_before", "revision_after",
-                    "structural_match", "input_blocks", "post_blocks", "audit_logged"):
+        for key in (
+            "applied",
+            "revision_before",
+            "revision_after",
+            "structural_match",
+            "input_blocks",
+            "post_blocks",
+            "audit_logged",
+        ):
             assert key in ev, f"key {key!r} missing"
 
     def test_structural_match_on_same_content(self) -> None:
@@ -343,8 +350,13 @@ class TestAssembleStructuralEvidence:
             applied=True,
             audit_logged=True,
         )
-        for key in ("applied", "revision_before", "revision_after",
-                    "inline_object_confirmed", "audit_logged"):
+        for key in (
+            "applied",
+            "revision_before",
+            "revision_after",
+            "inline_object_confirmed",
+            "audit_logged",
+        ):
             assert key in ev
 
     def test_inline_object_confirmed_when_present(self) -> None:

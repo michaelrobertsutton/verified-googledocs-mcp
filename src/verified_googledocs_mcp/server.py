@@ -63,6 +63,7 @@ mcp.add_middleware(EvidenceEnforcementMiddleware())
 # Tool: list_tabs
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool()
 def list_tabs(doc_id: str) -> dict[str, Any]:
     """List the tabs in a Google Doc.
@@ -84,6 +85,7 @@ def list_tabs(doc_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Tool: read_document
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool()
 def read_document(
@@ -126,6 +128,7 @@ def read_document(
 # Tool: find_sections
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool()
 def find_sections(
     doc_id: str,
@@ -166,6 +169,7 @@ def find_sections(
 # ---------------------------------------------------------------------------
 # Tool: replace_text
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool()
 def replace_text(
@@ -661,6 +665,7 @@ def diff_tab_vs_file(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_service() -> Any:
     """Return a Docs API service, failing fast if credentials are missing."""
     credentials = get_credentials()
@@ -671,6 +676,7 @@ def _get_service() -> Any:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     """Entry point for the `verified-googledocs-mcp` command.
 
@@ -679,6 +685,7 @@ def main() -> None:
     """
     if len(sys.argv) > 1 and sys.argv[1] == "auth":
         from .auth import run_auth_flow
+
         run_auth_flow()
         return
 

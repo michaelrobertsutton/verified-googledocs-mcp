@@ -24,6 +24,7 @@ from typing import Any
 # Primitive builders
 # ---------------------------------------------------------------------------
 
+
 def _text_run(text: str, bold: bool = False, italic: bool = False, url: str = "") -> dict[str, Any]:
     ts: dict[str, Any] = {}
     if bold:
@@ -79,16 +80,7 @@ def _bullet_item(text: str, nesting: int = 0) -> dict[str, Any]:
 
 
 def _table_row(cells: list[str]) -> dict[str, Any]:
-    return {
-        "tableCells": [
-            {
-                "content": [
-                    _paragraph([_text_run(c + "\n")])
-                ]
-            }
-            for c in cells
-        ]
-    }
+    return {"tableCells": [{"content": [_paragraph([_text_run(c + "\n")])]} for c in cells]}
 
 
 def _table(rows: list[list[str]]) -> dict[str, Any]:
@@ -104,6 +96,7 @@ def _table(rows: list[list[str]]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Multi-tab document fixture
 # ---------------------------------------------------------------------------
+
 
 def multi_tab_doc() -> dict[str, Any]:
     """A two-tab document with headings, bold/italic text, a list, and a table.
@@ -182,6 +175,7 @@ def multi_tab_doc() -> dict[str, Any]:
 # Tabless (legacy) document fixture
 # ---------------------------------------------------------------------------
 
+
 def tabless_doc() -> dict[str, Any]:
     """A document without any 'tabs' key — a legacy / pre-tabs document.
 
@@ -205,6 +199,7 @@ def tabless_doc() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Lossy-elements fixture
 # ---------------------------------------------------------------------------
+
 
 def lossy_elements_doc() -> dict[str, Any]:
     """A one-tab document containing an inline image, a person chip, and a footnote.
@@ -278,14 +273,11 @@ def lossy_elements_doc() -> dict[str, Any]:
 # Nested tabs fixture
 # ---------------------------------------------------------------------------
 
+
 def nested_tabs_doc() -> dict[str, Any]:
     """A document with a parent tab containing a child tab."""
-    parent_body = {
-        "content": [_heading(1, "Parent Tab", start=1, end=13)]
-    }
-    child_body = {
-        "content": [_heading(1, "Child Tab", start=1, end=12)]
-    }
+    parent_body = {"content": [_heading(1, "Parent Tab", start=1, end=13)]}
+    child_body = {"content": [_heading(1, "Child Tab", start=1, end=12)]}
     return {
         "documentId": "doc-nested",
         "revisionId": "rev-nested",

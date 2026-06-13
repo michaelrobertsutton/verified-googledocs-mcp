@@ -66,7 +66,7 @@ class UnsupportedMarkdown(Exception):
     source_map: list[int] | None = None
 
     def __str__(self) -> str:
-        loc = f" at lines {self.source_map[0]+1}-{self.source_map[1]}" if self.source_map else ""
+        loc = f" at lines {self.source_map[0] + 1}-{self.source_map[1]}" if self.source_map else ""
         return f"Unsupported markdown construct: {self.construct!r}{loc}"
 
 
@@ -164,7 +164,7 @@ _SUPPORTED_BLOCK_TYPES = frozenset(
         "link",
         "html_inline",
         # table content wrappers
-        "fence",      # will be rejected below
+        "fence",  # will be rejected below
     }
 )
 
@@ -181,7 +181,7 @@ _REJECTED_NODE_TYPES = frozenset(
         "html_inline",
         "math_block",
         "math_inline",
-        "s",               # strikethrough (markdown-it GFM extension)
+        "s",  # strikethrough (markdown-it GFM extension)
     }
 )
 
@@ -203,8 +203,8 @@ class _ParagraphStyle:
 
     start: int
     end: int
-    kind: str           # "heading", "bullets"
-    level: int = 0      # 1-6 for headings; nesting depth for bullets
+    kind: str  # "heading", "bullets"
+    level: int = 0  # 1-6 for headings; nesting depth for bullets
     ordered: bool = False
 
 
@@ -307,9 +307,7 @@ class _Compiler:
     # Inline content
     # ------------------------------------------------------------------
 
-    def _visit_inline_content(
-        self, node: SyntaxTreeNode, para_start: int
-    ) -> None:
+    def _visit_inline_content(self, node: SyntaxTreeNode, para_start: int) -> None:
         """Walk inline children, emitting insertText and recording style spans."""
         for child in node.children:
             self._visit_inline_node(child)
@@ -348,9 +346,7 @@ class _Compiler:
                 self._visit_inline_node(child)
             span_end = self._cursor
             if span_end > span_start:
-                self._style_spans.append(
-                    _StyleSpan(start=span_start, end=span_end, link_url=url)
-                )
+                self._style_spans.append(_StyleSpan(start=span_start, end=span_end, link_url=url))
         elif t == "code_inline":
             raise UnsupportedMarkdown(construct="code_inline", source_map=node.map)
         elif t == "image":
@@ -380,17 +376,13 @@ class _Compiler:
     # Lists
     # ------------------------------------------------------------------
 
-    def _visit_list(
-        self, node: SyntaxTreeNode, ordered: bool, nesting: int
-    ) -> None:
+    def _visit_list(self, node: SyntaxTreeNode, ordered: bool, nesting: int) -> None:
         for item in node.children:
             if item.type != "list_item":
                 raise UnsupportedMarkdown(construct=item.type, source_map=item.map)
             self._visit_list_item(item, ordered=ordered, nesting=nesting)
 
-    def _visit_list_item(
-        self, item: SyntaxTreeNode, ordered: bool, nesting: int
-    ) -> None:
+    def _visit_list_item(self, item: SyntaxTreeNode, ordered: bool, nesting: int) -> None:
         for child in item.children:
             if child.type == "paragraph":
                 para_start = self._cursor
@@ -467,8 +459,7 @@ class _Compiler:
 
         # Normalise all rows to n_cols cells.
         rows_normalised: list[list[SyntaxTreeNode | None]] = [
-            list(row) + [None] * (n_cols - len(row))
-            for row in rows
+            list(row) + [None] * (n_cols - len(row)) for row in rows
         ]
 
         insert_at = self._cursor
@@ -563,9 +554,7 @@ class _Compiler:
                 raise UnsupportedMarkdown(construct=child.type, source_map=child.map)
 
         cell_text = "".join(
-            req["insertText"]["text"]
-            for req in self._inserts
-            if "insertText" in req
+            req["insertText"]["text"] for req in self._inserts if "insertText" in req
         )
         cell_spans = list(self._style_spans)
 
@@ -598,9 +587,7 @@ class _Compiler:
     # Request builders
     # ------------------------------------------------------------------
 
-    def _make_para_style_requests(
-        self, ps: _ParagraphStyle
-    ) -> list[dict[str, Any]]:
+    def _make_para_style_requests(self, ps: _ParagraphStyle) -> list[dict[str, Any]]:
         if ps.kind == "heading":
             named_style = f"HEADING_{ps.level}"
             return [
@@ -633,9 +620,7 @@ class _Compiler:
             ]
         return []
 
-    def _make_text_style_requests(
-        self, ss: _StyleSpan
-    ) -> list[dict[str, Any]]:
+    def _make_text_style_requests(self, ss: _StyleSpan) -> list[dict[str, Any]]:
         requests: list[dict[str, Any]] = []
         range_dict = {"startIndex": ss.start, "endIndex": ss.end}
 

@@ -124,5 +124,3 @@ class TestVerifyError:
         ):
             err = _make_error(code, "permanent")
             assert err.envelope.retryable is False
-
-

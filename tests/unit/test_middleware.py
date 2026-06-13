@@ -120,9 +120,7 @@ class TestEvidenceEnforcement:
             raise ToolError("ZERO_MATCH: not found")
 
         async with Client(test_mcp) as client:
-            result = await client.call_tool(
-                "replace_text", {}, raise_on_error=False
-            )
+            result = await client.call_tool("replace_text", {}, raise_on_error=False)
         assert result.is_error
 
     @pytest.mark.asyncio

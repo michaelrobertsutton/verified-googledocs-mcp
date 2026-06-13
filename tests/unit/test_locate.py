@@ -311,7 +311,7 @@ class TestUtf16Hazards:
 
     def test_astral_emoji_before_needle(self):
         # 🌍 (U+1F30D) = 2 UTF-16 units.  Needle follows.
-        emoji = "\U0001F30D"  # EARTH GLOBE EUROPE-AFRICA
+        emoji = "\U0001f30d"  # EARTH GLOBE EUROPE-AFRICA
         text = emoji + "Hello"
         tab = _tab_raw([text + "\n"])
         result = locate("Hello", tab)
@@ -323,7 +323,7 @@ class TestUtf16Hazards:
 
     def test_zwj_emoji_sequence_before_needle(self):
         # 👨‍💻 is U+1F468 ZWJ U+1F4BB = 2 + 1 (ZWJ is BMP) + 2 = 5 UTF-16 units.
-        zwj_seq = "\U0001F468‍\U0001F4BB"
+        zwj_seq = "\U0001f468‍\U0001f4bb"
         text = zwj_seq + "target"
         tab = _tab_raw([text + "\n"])
         result = locate("target", tab)
@@ -345,7 +345,7 @@ class TestUtf16Hazards:
 
     def test_astral_emoji_after_needle(self):
         # Needle before an astral character. Span should not include the astral.
-        text = "find me\U0001F600"
+        text = "find me\U0001f600"
         tab = _tab_raw([text + "\n"])
         result = locate("find me", tab)
         start, end = result.spans[0]
@@ -366,7 +366,7 @@ class TestUtf16Hazards:
 
     def test_multiple_astral_chars_span(self):
         # Needle contains an astral character; span should include it.
-        needle = "A\U0001F600B"  # grinning face between two ASCII
+        needle = "A\U0001f600B"  # grinning face between two ASCII
         text = "prefix " + needle + " suffix"
         tab = _tab_raw([text + "\n"])
         result = locate(needle, tab)
@@ -389,7 +389,7 @@ class TestUtf16Hazards:
 
     def test_needle_with_astral_followed_by_more_text(self):
         # Two astral emojis in needle, then more text after the match.
-        needle = "\U0001F600\U0001F601"
+        needle = "\U0001f600\U0001f601"
         text = "before " + needle + " after"
         tab = _tab_raw([text + "\n"])
         result = locate(needle, tab)

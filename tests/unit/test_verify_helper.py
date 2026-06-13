@@ -76,7 +76,7 @@ class TestU16ToCodepoint:
         from verified_googledocs_mcp.verify import _flatten_tab
 
         # 🌍 = 2 UTF-16 units; text = "🌍A"
-        emoji = "\U0001F30D"
+        emoji = "\U0001f30d"
         tab = _tab_raw([emoji + "A\n"])
         text, u16_map, _ = _flatten_tab(tab)
         # code-point 0 = emoji (starts at u16 index 1)
@@ -107,8 +107,16 @@ class TestAssembleTextEditEvidence:
             applied=True,
             audit_logged=True,
         )
-        for key in ("applied", "match_count", "rung", "before", "after",
-                    "revision_before", "revision_after", "audit_logged"):
+        for key in (
+            "applied",
+            "match_count",
+            "rung",
+            "before",
+            "after",
+            "revision_before",
+            "revision_after",
+            "audit_logged",
+        ):
             assert key in evidence, f"key {key!r} missing from evidence"
 
     def test_applied_false_for_dryrun(self):
@@ -130,9 +138,7 @@ class TestAssembleTextEditEvidence:
 
     def test_match_count_and_rung_propagated(self):
         tab = _tab(["word and word"])
-        locate_result = LocateResult(
-            spans=[(1, 5), (10, 14)], rung="exact", match_count=2
-        )
+        locate_result = LocateResult(spans=[(1, 5), (10, 14)], rung="exact", match_count=2)
         evidence = assemble_text_edit_evidence(
             locate_result=locate_result,
             pre_tab_json=tab,
@@ -208,7 +214,7 @@ class TestAssembleTextEditEvidence:
 
     def test_astral_char_before_span(self):
         """Excerpt with astral char before the span must not crash or mis-index."""
-        emoji = "\U0001F30D"  # 2 UTF-16 units
+        emoji = "\U0001f30d"  # 2 UTF-16 units
         tab = _tab_raw([emoji + "Hello\n"])
         # "Hello" starts at UTF-16 index 1+2=3, ends at 3+5=8
         locate_result = _make_locate_result([(3, 8)])

@@ -153,8 +153,16 @@ class TestReplaceTextHappyPath:
                 )
         assert not result.is_error
         data = result.data
-        for key in ("applied", "match_count", "rung", "before", "after",
-                    "revision_before", "revision_after", "audit_logged"):
+        for key in (
+            "applied",
+            "match_count",
+            "rung",
+            "before",
+            "after",
+            "revision_before",
+            "revision_after",
+            "audit_logged",
+        ):
             assert key in data, f"key {key!r} missing from evidence"
 
     @pytest.mark.asyncio
@@ -491,9 +499,15 @@ class TestReplaceTextErrors:
     async def test_audit_failure_logged_in_evidence(self) -> None:
         """If append_audit raises, evidence carries audit_logged: false."""
         p1, p2, p3, p4, _ = _mock_replace_simple("Hello world", "Hello planet")
-        with p1, p2, p3, p4, patch(
-            "verified_googledocs_mcp.mutations.append_audit",
-            return_value=(False, "permission denied"),
+        with (
+            p1,
+            p2,
+            p3,
+            p4,
+            patch(
+                "verified_googledocs_mcp.mutations.append_audit",
+                return_value=(False, "permission denied"),
+            ),
         ):
             async with Client(mcp) as client:
                 result = await client.call_tool(
@@ -518,7 +532,7 @@ class TestReplaceTextUtf16:
     @pytest.mark.asyncio
     async def test_astral_char_before_find_correct_span(self) -> None:
         """Astral emoji before the target text must not offset the replace span."""
-        emoji = "\U0001F30D"  # 2 UTF-16 units
+        emoji = "\U0001f30d"  # 2 UTF-16 units
         pre = _simple_doc(emoji + "Hello world", revision="rev-1")
         post = _simple_doc(emoji + "Hello planet", revision="rev-2")
         p1, p2, p3, p4, mock_service = _mock_replace(pre, post)
