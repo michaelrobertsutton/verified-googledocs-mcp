@@ -20,10 +20,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from .docs import _available_tab_ids, _find_tab_body, fetch_document
 from .verify import (
     ErrorCode,
+    VerifyError,
     _make_error,
     append_audit,
+    locate,
 )
 
 
@@ -240,9 +243,6 @@ def execute_add_anchored_comment(
 
     Raises VerifyError on QUOTE_NOT_FOUND, INVALID_INPUT.
     """
-    from .docs import _available_tab_ids, _find_tab_body, fetch_document
-    from .verify import ErrorCode, LocateResult, _make_error, locate
-
     # --- Validate inputs ---------------------------------------------------
     if not body.strip():
         raise _make_error(ErrorCode.INVALID_INPUT, "comment body must not be empty")
@@ -264,8 +264,6 @@ def execute_add_anchored_comment(
     try:
         locate(quote, tab_json, expected_matches=1)
     except Exception as exc:
-        from .verify import VerifyError
-
         if isinstance(exc, VerifyError):
             # Re-raise as QUOTE_NOT_FOUND, mapping near-miss into candidates.
             orig_diag = exc.envelope.diagnostics
@@ -287,7 +285,6 @@ def execute_add_anchored_comment(
 
     # --- Create comment ----------------------------------------------------
     comment_raw = create_comment(drive_service, doc_id, quote, body)
-    comment_id = comment_raw.get("comment_id", "")
 
     # --- Assemble evidence -------------------------------------------------
     evidence = assemble_comment_state_evidence(
@@ -319,8 +316,6 @@ def execute_reply_to_comment(
 
     Creates the reply, re-queries the thread for post-state, returns evidence.
     """
-    from .verify import ErrorCode, _make_error
-
     if not body.strip():
         raise _make_error(ErrorCode.INVALID_INPUT, "reply body must not be empty")
 
