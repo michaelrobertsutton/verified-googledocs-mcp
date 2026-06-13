@@ -2,7 +2,7 @@
 
 An MCP server for Google Docs whose writes carry proof. Every mutating tool re-reads the affected content from the document after it writes and returns evidence of what actually changed: before/after excerpts, the match count, and the document revision before and after. A tool never reports success for an edit that did not land.
 
-> **Status:** early, built in the open. Auth and the read tools work today; the verified `replace_text` path and the comment and markdown-write tools are landing now. See [Status](#status) for the current surface. Not yet on PyPI.
+> **Status:** early, built in the open. All 14 tools are implemented and covered by an offline unit suite. What's left before a release: validating a handful of Google Docs API behaviors against a live document, a live smoke suite, and PyPI packaging. See [Status](#status). Not yet on PyPI.
 
 ## The problem
 
@@ -98,9 +98,10 @@ Built incrementally; each tool ships with its verification and tests rather than
 | OAuth (`googledocs-mcp auth`), token cache | done |
 | `read_document`, `list_tabs`, `find_sections` | done |
 | Verification kernel (locator, error envelope, audit) | done |
-| `replace_text` (verified) + enforcement middleware | landing |
-| Comment tools + `list_open_items` | wiring (suggestion extraction done) |
-| Markdown write tools + `diff_tab_vs_file` | wiring (compiler done) |
+| `replace_text` (verified) + enforcement middleware | done |
+| Comment tools + `list_open_items` | done |
+| Markdown write tools + `diff_tab_vs_file` | done |
+| Live API validation + smoke suite | needs credentials |
 | PyPI packaging, MCP registry listing | planned |
 
 ## Setup
