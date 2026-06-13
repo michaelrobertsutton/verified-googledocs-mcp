@@ -592,6 +592,26 @@ def assemble_text_edit_evidence(
 
 _AUDIT_REDACTED_KEYS = frozenset({"before", "after"})
 
+# Operator control surface for audit-excerpt redaction. No tool exposes the
+# toggle, so this environment variable is the only way to reach the redaction
+# path end-to-end (issue #30).
+_AUDIT_EXCERPTS_ENV = "VERIFIED_GOOGLEDOCS_MCP_AUDIT_EXCERPTS"
+_AUDIT_EXCERPTS_FALSEY = frozenset({"0", "false", "no", "off", ""})
+
+
+def _audit_excerpts_enabled(default: bool) -> bool:
+    """Resolve whether before/after excerpts are kept in the audit log.
+
+    ``VERIFIED_GOOGLEDOCS_MCP_AUDIT_EXCERPTS`` is authoritative when set: falsey
+    values (0/false/no/off, case-insensitive, plus the empty string) redact the
+    excerpts, any other value keeps them. When unset, the caller's ``default``
+    applies (True at every current call site).
+    """
+    raw = os.environ.get(_AUDIT_EXCERPTS_ENV)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in _AUDIT_EXCERPTS_FALSEY
+
 
 def _state_dir() -> Path:
     """Return the XDG state directory for this package."""
@@ -615,6 +635,12 @@ def append_audit(
 
     Best-effort: never raises.  Returns (logged: bool, reason: str).
     reason is empty on success.
+
+    Excerpt redaction: when excerpts are disabled the ``before``/``after`` fields
+    are replaced with ``"[redacted; N chars]"`` while all other evidence keys are
+    preserved. Set the ``VERIFIED_GOOGLEDOCS_MCP_AUDIT_EXCERPTS`` environment
+    variable to a falsey value (0/false/no/off) to redact; it overrides the
+    ``audit_excerpts`` argument when set (see ``_audit_excerpts_enabled``).
     """
     try:
         state_dir = _state_dir()
@@ -623,7 +649,7 @@ def append_audit(
         audit_path = state_dir / "audit.jsonl"
 
         payload = evidence.copy()
-        if not audit_excerpts:
+        if not _audit_excerpts_enabled(audit_excerpts):
             for key in _AUDIT_REDACTED_KEYS:
                 if key in payload:
                     payload[key] = f"[redacted; {len(str(payload[key]))} chars]"
