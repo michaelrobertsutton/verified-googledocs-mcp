@@ -6,12 +6,25 @@ import os
 import stat
 from pathlib import Path
 
+import pytest
+
 from verified_googledocs_mcp.verify import append_audit
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Fixtures / helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_audit_excerpts_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate every audit test from an ambient redaction env var.
+
+    append_audit now consults VERIFIED_GOOGLEDOCS_MCP_AUDIT_EXCERPTS; clearing it
+    by default keeps the param-driven tests deterministic regardless of the
+    developer's shell, and the env-var tests opt back in explicitly.
+    """
+    monkeypatch.delenv("VERIFIED_GOOGLEDOCS_MCP_AUDIT_EXCERPTS", raising=False)
 
 
 def _read_audit(path: Path) -> list[dict]:
@@ -177,6 +190,68 @@ class TestAuditExcerptsRedaction:
         before_val = records[0]["evidence"]["before"]
         # Should mention the character count.
         assert "100" in before_val
+
+
+# ---------------------------------------------------------------------------
+# Env-var control surface: VERIFIED_GOOGLEDOCS_MCP_AUDIT_EXCERPTS
+#
+# Every tool call site passes audit_excerpts=True, so the env var is the only
+# way to reach the redaction path end-to-end (issue #30).
+# ---------------------------------------------------------------------------
+
+
+class TestAuditExcerptsEnvVar:
+    _ENV = "VERIFIED_GOOGLEDOCS_MCP_AUDIT_EXCERPTS"
+
+    def _before(self, tmp_path: Path) -> str:
+        records = _read_audit(tmp_path / "verified-googledocs-mcp" / "audit.jsonl")
+        return records[0]["evidence"]["before"]
+
+    def test_env_false_redacts_without_param(self, tmp_path, monkeypatch):
+        """Default audit_excerpts=True (as every call site passes); env redacts."""
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        monkeypatch.setenv(self._ENV, "false")
+        append_audit(
+            doc="d",
+            tab="t",
+            tool="replace_text",
+            evidence={"before": "sensitive", "after": "sensitive"},
+        )
+        assert "[redacted;" in self._before(tmp_path)
+        assert "sensitive" not in self._before(tmp_path)
+
+    @pytest.mark.parametrize("value", ["0", "false", "FALSE", "no", "off", " off ", ""])
+    def test_env_falsey_values_redact(self, tmp_path, monkeypatch, value):
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        monkeypatch.setenv(self._ENV, value)
+        append_audit(doc="d", tab="t", tool="t", evidence={"before": "sensitive"})
+        assert "[redacted;" in self._before(tmp_path)
+
+    @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
+    def test_env_truthy_values_keep(self, tmp_path, monkeypatch, value):
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        monkeypatch.setenv(self._ENV, value)
+        append_audit(doc="d", tab="t", tool="t", evidence={"before": "keep me"})
+        assert self._before(tmp_path) == "keep me"
+
+    def test_env_overrides_explicit_true(self, tmp_path, monkeypatch):
+        """Operator config wins over an explicit audit_excerpts=True."""
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        monkeypatch.setenv(self._ENV, "off")
+        append_audit(
+            doc="d",
+            tab="t",
+            tool="t",
+            evidence={"before": "sensitive"},
+            audit_excerpts=True,
+        )
+        assert "[redacted;" in self._before(tmp_path)
+
+    def test_unset_env_falls_back_to_param(self, tmp_path, monkeypatch):
+        """With the env var cleared (autouse fixture), the param default keeps excerpts."""
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        append_audit(doc="d", tab="t", tool="t", evidence={"before": "keep me"})
+        assert self._before(tmp_path) == "keep me"
 
 
 # ---------------------------------------------------------------------------

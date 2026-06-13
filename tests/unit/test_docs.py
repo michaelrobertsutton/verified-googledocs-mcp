@@ -5,10 +5,13 @@ No network calls, no credentials.
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from verified_googledocs_mcp.docs import (
     IMPLICIT_TAB_ID,
+    fetch_document,
     find_sections_in,
     list_tabs_from,
     read_tab,
@@ -194,3 +197,33 @@ class TestFindSections:
         doc = nested_tabs_doc()
         matches = find_sections_in(doc, "Child Tab", "child-tab")
         assert len(matches) == 1
+
+
+class TestFetchDocument:
+    """fetch_document is the I/O edge; verify the Docs API call shape.
+
+    The locator and every index computation run over this response, so the
+    document must be fetched WITHOUT inline suggestions. If suggestionsViewMode
+    is unset it resolves to DEFAULT_FOR_CURRENT_ACCESS (SUGGESTIONS_INLINE for an
+    editor), which lets a pending suggestion collapse a duplicate sentence into a
+    single match and defeats replace_text's match-count guard (issue #28).
+    """
+
+    def _service_returning(self, doc: dict) -> tuple[MagicMock, MagicMock]:
+        service = MagicMock()
+        get_call = service.documents.return_value.get
+        get_call.return_value.execute.return_value = doc
+        return service, get_call
+
+    def test_pins_preview_without_suggestions(self) -> None:
+        service, get_call = self._service_returning({"documentId": "doc-1"})
+        fetch_document(service, "doc-1")
+        get_call.assert_called_once_with(
+            documentId="doc-1",
+            includeTabsContent=True,
+            suggestionsViewMode="PREVIEW_WITHOUT_SUGGESTIONS",
+        )
+
+    def test_returns_execute_result(self) -> None:
+        service, _ = self._service_returning({"documentId": "doc-1", "revisionId": "r1"})
+        assert fetch_document(service, "doc-1") == {"documentId": "doc-1", "revisionId": "r1"}
