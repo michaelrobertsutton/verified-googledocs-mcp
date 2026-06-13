@@ -164,7 +164,7 @@ uv run --extra dev ruff check .  # lint
 
 Unit tests run against synthetic Docs API fixtures and an in-memory MCP client, so the full suite is offline. A small live smoke suite (under `tests/live/`) exercises a real scratch document and needs credentials.
 
-See [`docs/architecture.md`](docs/architecture.md) for the module map and the verification pipeline, [`PRD.md`](PRD.md) for the full specification, and [`CONTRIBUTING.md`](CONTRIBUTING.md) to build on it.
+See [`docs/architecture.md`](docs/architecture.md) for the module map and the verification pipeline, [`PRD.md`](docs/PRD.md) for the full specification, and [`CONTRIBUTING.md`](CONTRIBUTING.md) to build on it.
 
 ## Limitations
 
