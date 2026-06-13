@@ -290,21 +290,18 @@ def execute_replace_range_markdown(
         )
 
     # --- Assemble evidence ---------------------------------------------------
-    # Approximate post-write range end for re-export slicing.
-    approx_end = (
-        start_index
-        + sum(
-            len(r.get("insertText", {}).get("text", ""))
-            for r in compiled_requests
-            if "insertText" in r
-        )
-        + 100
+    # Bound the re-export slice to exactly the inserted content so adjacent
+    # paragraphs beyond the write are not swept in and cause spurious mismatches.
+    exact_end = start_index + sum(
+        len(r.get("insertText", {}).get("text", ""))
+        for r in compiled_requests
+        if "insertText" in r
     )
     evidence = assemble_range_markdown_evidence(
         input_markdown=markdown,
         post_body=post_body,
         start_index=start_index,
-        end_index=max(approx_end, end_index),
+        end_index=exact_end,
         revision_before=revision_before,
         revision_after=revision_after,
         applied=True,

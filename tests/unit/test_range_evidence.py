@@ -360,6 +360,32 @@ class TestAssembleRangeMarkdownEvidence:
         assert ev["structural_match"] is True
         assert "structural_diff" not in ev
 
+    def test_adjacent_paragraphs_not_swept_into_slice(self) -> None:
+        # Regression for #43: passing an exact end_index excludes adjacent
+        # paragraphs that start at or after it. Before the fix, the caller
+        # added +100 padding, sweeping in trailing content and causing
+        # post_blocks > input_blocks (false structural_match: false).
+        heading = _heading_para(1, "Renamed Heading", 1, 18)
+        adjacent_1 = _para("Curly quotes paragraph.\n", 18, 43)
+        adjacent_2 = _para("NBSP paragraph.\n", 43, 60)
+        adjacent_3 = _para("Soft-hyphen paragraph.\n", 60, 84)
+        post = _body(heading, adjacent_1, adjacent_2, adjacent_3)
+
+        ev = assemble_range_markdown_evidence(
+            input_markdown="# Renamed Heading\n",
+            post_body=post,
+            start_index=1,
+            end_index=18,  # exact: heading only, adjacent paras excluded
+            revision_before="rev-1",
+            revision_after="rev-2",
+            applied=True,
+            audit_logged=True,
+        )
+        assert ev["structural_match"] is True
+        assert ev["input_blocks"] == 1
+        assert ev["post_blocks"] == 1
+        assert "structural_diff" not in ev
+
 
 # ---------------------------------------------------------------------------
 # assemble_structural_evidence
