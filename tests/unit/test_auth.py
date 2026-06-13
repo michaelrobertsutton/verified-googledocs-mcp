@@ -6,6 +6,8 @@ All tests mock the OAuth flow and filesystem. No real credentials required.
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -163,3 +165,30 @@ class TestCredentialsPath:
         monkeypatch.delenv("VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS", raising=False)
         path = auth_module._credentials_path()
         assert path.name == "credentials.json"
+
+
+# ---------------------------------------------------------------------------
+# Token file permissions: the refresh token must be owner-only
+# ---------------------------------------------------------------------------
+
+
+class TestTokenFilePermissions:
+    def test_write_token_is_owner_only(self, tmp_path: Path) -> None:
+        token_path = tmp_path / "nested" / "token.json"
+        auth_module._write_token(token_path, '{"refresh_token": "secret"}')
+        assert token_path.read_text() == '{"refresh_token": "secret"}'
+        assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(token_path.parent.stat().st_mode) == 0o700
+
+    def test_write_token_replaces_loose_file(self, tmp_path: Path) -> None:
+        token_path = tmp_path / "token.json"
+        token_path.write_text("old")
+        os.chmod(token_path, 0o644)
+        auth_module._write_token(token_path, "new")
+        assert token_path.read_text() == "new"
+        assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+
+    def test_write_token_leaves_no_tmp_file(self, tmp_path: Path) -> None:
+        token_path = tmp_path / "token.json"
+        auth_module._write_token(token_path, "{}")
+        assert not (tmp_path / "token.json.tmp").exists()
