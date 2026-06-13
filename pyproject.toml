@@ -56,6 +56,9 @@ testpaths = ["tests"]
 # Coverage runs on every invocation for a quick local signal; the hard floor
 # (--cov-fail-under) is applied in CI so partial local runs don't fail.
 addopts = "--cov=verified_googledocs_mcp --cov-report=term-missing"
+markers = [
+    "live: live acceptance tests against the real Google APIs; skipped unless --run-live is passed and OAuth credentials are present (never runs in CI). See tests/live/.",
+]
 
 [tool.ruff]
 target-version = "py312"

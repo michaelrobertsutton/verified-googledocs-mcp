@@ -1,0 +1,155 @@
+"""§1 Reads and structure — read_document, list_tabs, find_sections.
+
+These are read-only and run against the canonical fixture, except
+find_sections, which needs a heading and therefore uses a scratch copy with a
+seeded HEADING_1 (the canonical fixture has no headings yet — gap #31).
+"""
+
+from __future__ import annotations
+
+import re
+
+import pytest
+
+pytestmark = pytest.mark.live
+
+
+def _norm(s: str) -> str:
+    """Strip markdown backslash-escapes, NBSP, and soft hyphens; collapse ws.
+
+    Lets structured-run text (raw document text) be compared against the
+    markdown rendering of the same span, which escapes punctuation and keeps
+    NBSP/soft-hyphen code points.
+    """
+    s = re.sub(r"\\(.)", r"\1", s)  # markdown escape: \- -> -, \! -> !
+    s = s.replace(" ", " ").replace("­", "")  # NBSP -> space, soft hyphen -> gone
+    return re.sub(r"\s+", " ", s).strip()
+
+
+# ---------------------------------------------------------------------------
+# read_document
+# ---------------------------------------------------------------------------
+
+
+class TestReadDocument:
+    async def test_markdown_mode_returns_hazard_text(self, client, canonical_doc_id):
+        result = await client.call_tool(
+            "read_document",
+            {"doc_id": canonical_doc_id, "tab_id": "t.0", "format": "markdown"},
+        )
+        data = result.data
+        assert data["format"] == "markdown"
+        assert data["revision_id"]
+        # Curly quotes preserved verbatim (not normalised away on read).
+        assert "“Hello, world" in data["content"]
+        assert "Duplicate sentence test" in data["content"]
+
+    async def test_structured_mode_runs_line_up_with_visible_text(
+        self, client, canonical_doc_id
+    ):
+        """Structured spans should line up with the markdown text on the same tab."""
+        md = (
+            await client.call_tool(
+                "read_document",
+                {"doc_id": canonical_doc_id, "tab_id": "t.0", "format": "markdown"},
+            )
+        ).data["content"]
+
+        structured = (
+            await client.call_tool(
+                "read_document",
+                {"doc_id": canonical_doc_id, "tab_id": "t.0", "format": "structured"},
+            )
+        ).data
+
+        paragraphs = structured["content"]["paragraphs"]
+        assert paragraphs, "structured read returned no paragraphs"
+
+        md_norm = _norm(md)
+        last_start = -1
+        for para in paragraphs:
+            # Paragraph spans advance monotonically through the document.
+            assert para["start"] >= last_start
+            last_start = para["start"]
+            for run in para["runs"]:
+                assert run["end"] >= run["start"]
+                visible = _norm(run["text"])
+                if visible:
+                    # The text of each structured span is present in the visible
+                    # markdown — i.e. the spans line up with what the reader sees.
+                    assert visible in md_norm, f"run text {visible!r} not in rendered markdown"
+
+    async def test_markdown_and_structured_share_revision(self, client, canonical_doc_id):
+        a = (
+            await client.call_tool(
+                "read_document",
+                {"doc_id": canonical_doc_id, "tab_id": "t.0", "format": "markdown"},
+            )
+        ).data
+        b = (
+            await client.call_tool(
+                "read_document",
+                {"doc_id": canonical_doc_id, "tab_id": "t.0", "format": "structured"},
+            )
+        ).data
+        assert a["revision_id"] == b["revision_id"]
+
+
+# ---------------------------------------------------------------------------
+# list_tabs
+# ---------------------------------------------------------------------------
+
+
+class TestListTabs:
+    async def test_ids_and_titles_match_real_document(self, client, canonical_doc_id):
+        data = (await client.call_tool("list_tabs", {"doc_id": canonical_doc_id})).data
+        by_id = {t["tab_id"]: t for t in data["tabs"]}
+        assert "t.0" in by_id
+        assert "t.a53r2f94k2pt" in by_id
+        assert by_id["t.a53r2f94k2pt"]["title"] == "Unicode Hazards"
+        # Tabs carry an index reflecting document order.
+        assert by_id["t.0"]["index"] == 0
+
+    @pytest.mark.skip(
+        reason="fixture has no nested tab; Docs API cannot create tabs (UI-only). "
+        "Nested-tab live coverage is blocked on fixture gap #31. "
+        "list_tabs nesting logic is covered offline by nested_tabs_doc."
+    )
+    async def test_nested_tab_is_reported(self, client, canonical_doc_id):
+        data = (await client.call_tool("list_tabs", {"doc_id": canonical_doc_id})).data
+        assert any(t.get("child_tabs") for t in data["tabs"])
+
+
+# ---------------------------------------------------------------------------
+# find_sections  (uses a scratch copy with a seeded heading — gap #31)
+# ---------------------------------------------------------------------------
+
+
+class TestFindSections:
+    async def test_heading_resolved_to_range_stamped_with_revision(
+        self, client, scratch_doc_with_heading, live_services
+    ):
+        from verified_googledocs_mcp.docs import fetch_document
+
+        s = scratch_doc_with_heading
+        result = (
+            await client.call_tool(
+                "find_sections",
+                {
+                    "doc_id": s.doc_id,
+                    "tab_id": s.primary_tab,
+                    "heading": "Acceptance",
+                },
+            )
+        ).data
+
+        matches = result["matches"]
+        assert matches, "seeded heading not found by find_sections"
+        m = matches[0]
+        assert s.heading_text in m["matched_text"]
+        assert m["end_index"] > m["start_index"]
+
+        # The stamp must match a fresh documents.get revision.
+        docs, _ = live_services
+        fresh_rev = fetch_document(docs, s.doc_id)["revisionId"]
+        assert m["computed_at_revision"] == fresh_rev
