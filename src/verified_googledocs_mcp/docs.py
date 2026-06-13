@@ -298,7 +298,21 @@ def fetch_document(service: Any, doc_id: str) -> dict[str, Any]:
     Always requests includeTabsContent=true so multi-tab documents are fully
     populated. Uses google-api-python-client's built-in retry (num_retries=3)
     rather than a custom loop.
+
+    Pins suggestionsViewMode=PREVIEW_WITHOUT_SUGGESTIONS so the text the locator
+    and all index math run over is the base document, never suggestion-inline
+    text. Left unset it resolves to DEFAULT_FOR_CURRENT_ACCESS — SUGGESTIONS_INLINE
+    for an editor — which would let a pending suggestion alter one of two duplicate
+    sentences so the locator sees a single match, silently defeating replace_text's
+    match-count guard (issue #28). list_open_items deliberately uses a separate
+    SUGGESTIONS_INLINE get because it must see suggestions; this read must not.
     """
     return (
-        service.documents().get(documentId=doc_id, includeTabsContent=True).execute(num_retries=3)
+        service.documents()
+        .get(
+            documentId=doc_id,
+            includeTabsContent=True,
+            suggestionsViewMode="PREVIEW_WITHOUT_SUGGESTIONS",
+        )
+        .execute(num_retries=3)
     )
