@@ -293,9 +293,7 @@ def execute_replace_range_markdown(
     # Bound the re-export slice to exactly the inserted content so adjacent
     # paragraphs beyond the write are not swept in and cause spurious mismatches.
     exact_end = start_index + sum(
-        len(r.get("insertText", {}).get("text", ""))
-        for r in compiled_requests
-        if "insertText" in r
+        len(r.get("insertText", {}).get("text", "")) for r in compiled_requests if "insertText" in r
     )
     evidence = assemble_range_markdown_evidence(
         input_markdown=markdown,
