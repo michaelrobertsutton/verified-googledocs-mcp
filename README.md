@@ -138,6 +138,17 @@ cd verified-googledocs-mcp
 claude  # .mcp.json is loaded automatically
 ```
 
+**Use it across all your projects (user scope).** To make the server available in every Claude Code session on this machine — not just inside the cloned repo — register it at user scope with a pinned directory:
+
+```bash
+claude mcp add verified-googledocs-mcp --scope user -- \
+  /opt/homebrew/bin/uv run --directory /path/to/verified-googledocs-mcp verified-googledocs-mcp
+```
+
+This writes to `~/.claude.json` (the user-scope store). The `--directory` flag pins `uv` to resolve the project from the repo path, so the command works regardless of which directory your Claude Code session starts from. Replace `/path/to/verified-googledocs-mcp` with your actual clone path.
+
+The full `uv` path (`/opt/homebrew/bin/uv`) avoids PATH gaps in headless launches — see the PATH note below for details.
+
 ### Claude Desktop and other clients
 
 Most clients use the standard `mcpServers` config block. Add the following to your client's config file:
