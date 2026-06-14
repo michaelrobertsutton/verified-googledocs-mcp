@@ -1,5 +1,7 @@
 # verified-googledocs-mcp
 
+<!-- mcp-name: io.github.michaelrobertsutton/verified-googledocs-mcp -->
+
 [![CI](https://github.com/michaelrobertsutton/verified-googledocs-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/michaelrobertsutton/verified-googledocs-mcp/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen.svg)](pyproject.toml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
@@ -7,7 +9,7 @@
 
 An MCP server for Google Docs whose writes carry proof. Every mutating tool re-reads the affected content from the document after it writes and returns evidence of what actually changed: before/after excerpts, the match count, and the document revision before and after. A tool never reports success for an edit that did not land.
 
-> **Status:** early, built in the open. All 14 tools are implemented and covered by an offline unit suite. What's left before a release: validating a handful of Google Docs API behaviors against a live document, a live smoke suite, and PyPI packaging. See [Status](#status). Not yet on PyPI.
+> **Status:** all 14 tools are implemented, covered by an offline unit suite, and exercised against the real Google Docs and Drive APIs — every tool and every error code passes the [live acceptance gate](docs/acceptance-report.md). Install today [from source](#install); the `uvx`/`pip` path lands with the first PyPI release (`v0.1.0`). See [Status](#status).
 
 ## The problem
 
@@ -60,6 +62,34 @@ When something is wrong, the tool fails loud and *diagnosed*, with a typed error
 - **UTF-16 correct.** Match spans are mapped to the UTF-16 code units the Docs API indexes by, so emoji, combining marks, and other astral characters don't shift an edit onto the wrong text.
 - **Audit trail.** Every mutation appends a line to a local JSONL log. The append is best-effort: it never fails a write, and if it can't be written the evidence says so (`audit_logged: false`).
 
+### Evidence by family
+
+The guarantee is not one universal payload — it is a per-family invariant. Each
+family re-reads the document after the write and proves the property that family
+is responsible for. Every mutating tool also carries `revision_before`,
+`revision_after`, and `audit_logged`.
+
+| Family | Tools | Proves |
+|--------|-------|--------|
+| **Text edit** | `replace_text` | `match_count` equals `expected_matches`; `rung` names the normalization pass that matched; `before`/`after` are ±200-char excerpts of the edited span, the `after` re-read post-write |
+| **Markdown range** | `replace_range_markdown`, `replace_tab_markdown`, `append_markdown` | `structural_match` (the written markdown round-trips), `input_blocks` vs `post_blocks` counts, and a `structural_diff` list naming any mismatch |
+| **Structural** | `insert_image` | `inline_object_confirmed` — a post-write scan found the inline object at the anchor paragraph |
+| **Comment state** | `add_anchored_comment`, `reply_to_comment`, `resolve_comment` | the re-queried `resolved` flag, `reply_count`, `content`, `quoted_text`, and `author` — a resolve that didn't land returns `COMMENT_STILL_OPEN`, never success |
+
+The read and sync tools (`read_document`, `list_tabs`, `find_sections`,
+`list_open_items`, `get_comment_thread`, `diff_tab_vs_file`) make no changes and
+carry no `applied`/evidence payload.
+
+### Dry run
+
+The five mutating tools (`replace_text`, `replace_range_markdown`,
+`replace_tab_markdown`, `append_markdown`, `insert_image`) accept `dry_run=true`.
+No API write is issued; the response carries `applied: false`, an empty
+`revision_after` (no write, so no new revision), `audit_logged: false`, and —
+for `replace_text` — a predicted `after` excerpt computed by splicing the
+replacement into the pre-read. Use it to confirm a locate resolves to the right
+span before committing the edit.
+
 ## Tools
 
 Fourteen focused tools, each described by *when* to reach for it, replace the slice of a 150-tool Workspace server that document workflows actually use.
@@ -106,25 +136,54 @@ Built incrementally; each tool ships with its verification and tests rather than
 | `replace_text` (verified) + enforcement middleware | done |
 | Comment tools + `list_open_items` | done |
 | Markdown write tools + `diff_tab_vs_file` | done |
-| Live API validation + smoke suite | needs credentials |
-| PyPI packaging, MCP registry listing | planned |
+| Live acceptance gate (all 14 tools, all 12 error codes) | done — [report](docs/acceptance-report.md) |
+| PyPI packaging + publish workflow | done; first release `v0.1.0` |
+| MCP registry listing | published with `v0.1.0` |
 
-## Setup
+## Install
 
-> Packaging is in progress; until it lands, run from a clone.
+The server talks to Google with **your own** OAuth credentials, so setup is a
+one-time Google Cloud step, then registering the server with your MCP client.
 
-The server talks to Google with your own OAuth credentials. One-time setup:
+### 1. Google Cloud project (OAuth credentials)
 
-1. Create a Google Cloud project and enable the **Google Docs API** and **Google Drive API**.
-2. Configure the OAuth consent screen (External, Testing) and add your Google account as a test user.
-3. Create an OAuth client ID of type **Desktop app** and download the client secret to `~/.config/verified-googledocs-mcp/credentials.json`.
-4. Authorize once, in a terminal:
+1. Create a Google Cloud project and enable the **Google Docs API** and **Google Drive API** (APIs & Services → Library).
+2. Configure the **OAuth consent screen**: User type **External**, publishing status **Testing**, and add your own Google account under **Test users**. (Testing mode is the point — the app stays private to the test users you list; you never submit it for Google verification.)
+3. Create an **OAuth client ID** of type **Desktop app** and download the client secret JSON to `~/.config/verified-googledocs-mcp/credentials.json`. (Override the location with `VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS`.)
 
-   ```bash
-   uv run verified-googledocs-mcp auth
-   ```
+### 2. Authorize once, in a terminal
 
-   This opens a browser, completes consent, and caches a refreshable token at `~/.config/verified-googledocs-mcp/token.json`. Auth runs only here, never inside the server, because MCP clients start the server headless.
+```bash
+# from a clone (works today):
+uv run verified-googledocs-mcp auth
+# or, once published to PyPI:
+uvx verified-googledocs-mcp auth
+```
+
+This opens a browser and completes consent. Because the app is unverified and in
+Testing, Google shows a **"Google hasn't verified this app"** screen — click
+**Advanced → Go to verified-googledocs-mcp (unsafe)** and continue. This is
+expected for a personal Desktop client; you are granting access to your own app,
+running locally as you. It then caches a refreshable token at
+`~/.config/verified-googledocs-mcp/token.json`. Auth runs only here, never inside
+the server, because MCP clients start the server headless.
+
+### 3. Run it
+
+**From source (works today).** Clone the repo; `uv` resolves dependencies on first run:
+
+```bash
+git clone https://github.com/michaelrobertsutton/verified-googledocs-mcp
+cd verified-googledocs-mcp
+uv run verified-googledocs-mcp        # starts the stdio server
+```
+
+**From PyPI (with the `v0.1.0` release).** Once published, no clone is needed:
+
+```bash
+uvx verified-googledocs-mcp           # downloads + runs in one step
+# or: pip install verified-googledocs-mcp
+```
 
 Then register the server with your MCP client.
 
@@ -181,6 +240,23 @@ Most clients use the standard `mcpServers` config block. Add the following to yo
 
 Find the full path with `which uv`. On Apple Silicon the Homebrew prefix is `/opt/homebrew`; on Intel Mac it is `/usr/local`.
 
+**Once published to PyPI**, drop the clone and the `cwd`/`--directory` pinning entirely and let `uvx` fetch the package:
+
+```jsonc
+{
+  "mcpServers": {
+    "verified-googledocs-mcp": {
+      "command": "uvx",
+      "args": ["verified-googledocs-mcp"]
+    }
+  }
+}
+```
+
+**Startup-timeout note.** The first `uvx` launch downloads the package and its dependencies, which can exceed a client's MCP startup timeout and surface as a failed connection. Pre-warm the cache once in a terminal by running the `auth` command (`uvx verified-googledocs-mcp auth`) — you do this anyway, and it installs the package into the `uvx` cache so the client's launch is fast.
+
+**Logs / stderr.** The server logs to stderr, which MCP clients capture rather than show inline. If a connection or a tool call fails, check the client's MCP logs — for Claude Desktop on macOS, `~/Library/Logs/Claude/mcp*.log`. An `AUTH_EXPIRED` envelope there means the token is missing or expired; re-run the `auth` command.
+
 The server uses the `documents` and `drive` scopes (comments require Drive). The credentials path is overridable with `VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS`.
 
 ## Security and permissions
@@ -189,7 +265,7 @@ This is a single-user, local server. It runs as you, over stdio, launched by you
 
 - **Scopes.** It requests `documents` and `drive`. The full `drive` scope is broader than editing alone needs, but the comment and suggestion tools (listing, replying to, and resolving comments on documents you already have) operate through the Drive API on arbitrary existing files, which the narrower `drive.file` scope cannot reach. `drive` is the minimum that covers the full tool set; if you don't need the comment tools, a fork could drop to a narrower scope.
 - **Credentials at rest.** The OAuth client secret lives at `~/.config/verified-googledocs-mcp/credentials.json`; the cached token (including the refresh token) is written to `~/.config/verified-googledocs-mcp/token.json` with owner-only permissions (`0600`, under a `0700` directory). Treat both as secrets: a leaked refresh token grants your full `drive`+`documents` access until you revoke it in your Google Account's security settings. Neither file is ever committed (both are gitignored).
-- **Audit log.** Every mutation appends to `~/.local/state/verified-googledocs-mcp/audit.jsonl`, also `0600`. It records document content excerpts; pass `audit_excerpts=false` to log evidence metadata without the content.
+- **Audit log.** Every mutation appends to `~/.local/state/verified-googledocs-mcp/audit.jsonl` (also `0600`). Each line records the timestamp, document ID, tab ID, tool name, and the evidence payload — which includes before/after **content excerpts**. To log the metadata without the excerpts, set the environment variable `VERIFIED_GOOGLEDOCS_MCP_AUDIT_EXCERPTS` to a falsey value (`0`, `false`, `no`, or `off`); the `before`/`after` fields are then replaced with `"[redacted; N chars]"` and every other field is kept. Override the log location with `XDG_STATE_HOME`.
 
 ## Error codes
 
@@ -219,9 +295,9 @@ uv run --extra dev ruff format src tests  # format
 uv run --extra dev mypy src               # type check
 ```
 
-Unit tests run against synthetic Docs API fixtures and an in-memory MCP client, so the full suite is offline. A small live smoke suite (under `tests/live/`) exercises a real scratch document and needs credentials.
+Unit tests run against synthetic Docs API fixtures and an in-memory MCP client, so the full suite is offline (it never runs the live tests). The live acceptance suite (under `tests/live/`) runs with `pytest --run-live` against a real scratch document and needs OAuth credentials; it is the pre-release gate and never runs in CI — see [`docs/acceptance-report.md`](docs/acceptance-report.md).
 
-See [`docs/architecture.md`](docs/architecture.md) for the module map and the verification pipeline, [`PRD.md`](docs/PRD.md) for the full specification, and [`CONTRIBUTING.md`](CONTRIBUTING.md) to build on it.
+See [`docs/architecture.md`](docs/architecture.md) for the module map and the verification pipeline, [`PRD.md`](docs/PRD.md) for the full specification, [`docs/cutover.md`](docs/cutover.md) to migrate off a general Workspace MCP server, and [`CONTRIBUTING.md`](CONTRIBUTING.md) to build on it.
 
 ## Limitations
 
