@@ -23,7 +23,7 @@ import difflib
 from typing import Any
 from urllib.parse import urlparse
 
-from .docs import _available_tab_ids, _find_tab_body, fetch_document
+from .docs import IMPLICIT_TAB_ID, _available_tab_ids, _find_tab_body, fetch_document
 from .markdown import to_markdown
 from .markdown_writer import UnsupportedMarkdown, compile_markdown
 from .mutations import _translate_http_error
@@ -131,6 +131,32 @@ def _structural_total(counts: dict[str, int]) -> int:
 # ---------------------------------------------------------------------------
 # Markdown write pipelines
 # ---------------------------------------------------------------------------
+
+
+def _stamp_tab_id(node: Any, tab_id: str) -> None:
+    """Recursively stamp tab_id onto every location/range in a request tree (#48).
+
+    compile_markdown emits ``location``/``range`` objects with only an ``index``
+    (or start/end), no ``tabId``. Without a ``tabId`` the Docs API resolves the
+    index against the document's *first* tab segment, so a write aimed at a
+    secondary tab errors (index past the first tab's end) or lands in the wrong
+    tab — leaving the target empty. Stamping the target ``tabId`` onto every
+    location/range scopes the whole batch to the intended tab. ``setdefault``
+    preserves any tabId already set on hand-built requests.
+
+    Tabless documents use the implicit "_body" tab; their body segment is
+    addressed without a tabId, so stamping is skipped.
+    """
+    if not tab_id or tab_id == IMPLICIT_TAB_ID:
+        return
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("location", "range") and isinstance(value, dict):
+                value.setdefault("tabId", tab_id)
+            _stamp_tab_id(value, tab_id)
+    elif isinstance(node, list):
+        for item in node:
+            _stamp_tab_id(item, tab_id)
 
 
 def _tab_has_content(body: dict[str, Any]) -> bool:
@@ -300,6 +326,7 @@ def execute_replace_range_markdown(
             }
         }
     ] + compiled_requests
+    _stamp_tab_id(requests, tab_id)
 
     body_payload: dict[str, Any] = {
         "requests": requests,
@@ -467,6 +494,7 @@ def execute_replace_tab_markdown(
             }
         )
     requests.extend(compiled_requests)
+    _stamp_tab_id(requests, tab_id)
 
     body_payload: dict[str, Any] = {
         "requests": requests,
@@ -570,6 +598,7 @@ def execute_append_markdown(
         }
     }
     requests: list[dict[str, Any]] = [newline_request, *compiled_requests]
+    _stamp_tab_id(requests, tab_id)
 
     # --- Dry run -------------------------------------------------------------
     if dry_run:

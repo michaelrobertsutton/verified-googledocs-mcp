@@ -910,3 +910,89 @@ class TestSecondaryTabFalseSuccess:
         data = result.data
         assert data["post_blocks"] > 0
         assert data["applied"] is True
+
+
+# ---------------------------------------------------------------------------
+# tabId scoping on every write request (issue #48 root cause)
+# ---------------------------------------------------------------------------
+
+
+def _iter_locations_and_ranges(node: Any):
+    """Yield every dict that is the value of a 'location' or 'range' key."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("location", "range") and isinstance(value, dict):
+                yield value
+            yield from _iter_locations_and_ranges(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _iter_locations_and_ranges(item)
+
+
+class TestStampTabId:
+    """Unit tests for _stamp_tab_id (issue #48)."""
+
+    def test_adds_tab_id_to_location_and_range(self) -> None:
+        from verified_googledocs_mcp.markdown_mutations import _stamp_tab_id
+
+        reqs = [
+            {"insertText": {"location": {"index": 5}, "text": "x"}},
+            {"updateParagraphStyle": {"range": {"startIndex": 1, "endIndex": 3}}},
+        ]
+        _stamp_tab_id(reqs, "tab-9")
+        assert reqs[0]["insertText"]["location"]["tabId"] == "tab-9"
+        assert reqs[1]["updateParagraphStyle"]["range"]["tabId"] == "tab-9"
+
+    def test_preserves_existing_tab_id(self) -> None:
+        from verified_googledocs_mcp.markdown_mutations import _stamp_tab_id
+
+        reqs = [
+            {"deleteContentRange": {"range": {"startIndex": 1, "endIndex": 3, "tabId": "keep"}}}
+        ]
+        _stamp_tab_id(reqs, "tab-9")
+        assert reqs[0]["deleteContentRange"]["range"]["tabId"] == "keep"
+
+    def test_skips_implicit_tabless_doc(self) -> None:
+        from verified_googledocs_mcp.docs import IMPLICIT_TAB_ID
+        from verified_googledocs_mcp.markdown_mutations import _stamp_tab_id
+
+        reqs = [{"insertText": {"location": {"index": 5}, "text": "x"}}]
+        _stamp_tab_id(reqs, IMPLICIT_TAB_ID)
+        assert "tabId" not in reqs[0]["insertText"]["location"]
+
+
+class TestSecondaryTabWriteScoping:
+    """Every request a markdown write issues must carry the target tabId, so a
+    secondary-tab write lands in that tab rather than the first tab (issue #48)."""
+
+    @pytest.mark.asyncio
+    async def test_replace_tab_scopes_all_requests_to_target_tab(self) -> None:
+        pre = _two_tab_doc(_populated_tab_content(), revision="rev-1")
+        post = _two_tab_doc(_populated_tab_content(), revision="rev-2")
+        patchers, mock_service = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                await client.call_tool(
+                    "replace_tab_markdown",
+                    {"doc_id": "doc-2tab", "tab_id": "t.second", "markdown": _BACKUP_MD},
+                )
+        body = mock_service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+        locs = list(_iter_locations_and_ranges(body["requests"]))
+        assert locs, "expected location/range objects in the batchUpdate requests"
+        assert all(o.get("tabId") == "t.second" for o in locs)
+
+    @pytest.mark.asyncio
+    async def test_append_scopes_all_requests_to_target_tab(self) -> None:
+        pre = _two_tab_doc(_empty_tab_content(), revision="rev-1")
+        post = _two_tab_doc(_populated_tab_content(), revision="rev-2")
+        patchers, mock_service = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                await client.call_tool(
+                    "append_markdown",
+                    {"doc_id": "doc-2tab", "tab_id": "t.second", "markdown": _BACKUP_MD},
+                )
+        body = mock_service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+        locs = list(_iter_locations_and_ranges(body["requests"]))
+        assert locs
+        assert all(o.get("tabId") == "t.second" for o in locs)
