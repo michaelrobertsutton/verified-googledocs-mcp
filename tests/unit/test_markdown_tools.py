@@ -768,3 +768,231 @@ class TestMiddlewareEnforcement:
                 )
         assert not result.is_error
         assert "applied" in result.data
+
+
+# ---------------------------------------------------------------------------
+# Secondary-tab false success (issue #48)
+# ---------------------------------------------------------------------------
+
+
+def _two_tab_doc(
+    second_tab_content: list[dict[str, Any]], revision: str = "rev-1"
+) -> dict[str, Any]:
+    """Two-tab doc: a populated first tab 't.0' and a second tab 't.second'."""
+    first = {
+        "content": [
+            {
+                "startIndex": 1,
+                "endIndex": 12,
+                "paragraph": {
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                    "elements": [
+                        {"startIndex": 1, "endIndex": 12, "textRun": {"content": "First tab.\n"}}
+                    ],
+                },
+            }
+        ]
+    }
+    return {
+        "documentId": "doc-2tab",
+        "revisionId": revision,
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "t.0", "title": "Body", "index": 0},
+                "documentTab": {"body": first},
+                "childTabs": [],
+            },
+            {
+                "tabProperties": {"tabId": "t.second", "title": "Backup", "index": 1},
+                "documentTab": {"body": {"content": second_tab_content}},
+                "childTabs": [],
+            },
+        ],
+    }
+
+
+def _empty_tab_content() -> list[dict[str, Any]]:
+    """A tab body holding only an empty paragraph (no real content)."""
+    return [
+        {
+            "startIndex": 1,
+            "endIndex": 2,
+            "paragraph": {
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                "elements": [{"startIndex": 1, "endIndex": 2, "textRun": {"content": "\n"}}],
+            },
+        }
+    ]
+
+
+def _populated_tab_content() -> list[dict[str, Any]]:
+    """A tab body holding a heading and a paragraph (a landed write)."""
+    return [
+        {
+            "startIndex": 2,
+            "endIndex": 18,
+            "paragraph": {
+                "paragraphStyle": {"namedStyleType": "HEADING_2"},
+                "elements": [
+                    {"startIndex": 2, "endIndex": 18, "textRun": {"content": "Backup content\n"}}
+                ],
+            },
+        },
+        {
+            "startIndex": 18,
+            "endIndex": 34,
+            "paragraph": {
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                "elements": [
+                    {"startIndex": 18, "endIndex": 34, "textRun": {"content": "Body paragraph.\n"}}
+                ],
+            },
+        },
+    ]
+
+
+_BACKUP_MD = "## Backup content\n\nBody paragraph."
+
+
+class TestSecondaryTabFalseSuccess:
+    """A write the API accepted but that left the tab empty must report
+    applied=false, never a false success (issue #48)."""
+
+    @pytest.mark.asyncio
+    async def test_append_to_empty_secondary_tab_reports_not_applied(self) -> None:
+        pre = _two_tab_doc(_empty_tab_content(), revision="rev-1")
+        post = _two_tab_doc(
+            _empty_tab_content(), revision="rev-2"
+        )  # still empty: write did not land
+        patchers, _ = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "append_markdown",
+                    {"doc_id": "doc-2tab", "tab_id": "t.second", "markdown": _BACKUP_MD},
+                )
+        assert not result.is_error
+        data = result.data
+        assert data["post_blocks"] == 0
+        assert data["input_blocks"] > 0
+        assert data["applied"] is False  # the bug was: True
+        assert any("did not land" in d for d in data.get("structural_diff", []))
+
+    @pytest.mark.asyncio
+    async def test_replace_tab_to_empty_secondary_tab_reports_not_applied(self) -> None:
+        pre = _two_tab_doc(_empty_tab_content(), revision="rev-1")
+        post = _two_tab_doc(_empty_tab_content(), revision="rev-2")
+        patchers, _ = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "replace_tab_markdown",
+                    {"doc_id": "doc-2tab", "tab_id": "t.second", "markdown": _BACKUP_MD},
+                )
+        assert not result.is_error
+        data = result.data
+        assert data["post_blocks"] == 0
+        assert data["applied"] is False
+
+    @pytest.mark.asyncio
+    async def test_append_that_lands_in_secondary_tab_is_applied(self) -> None:
+        # Control: when the post-read shows the content landed, applied stays True.
+        pre = _two_tab_doc(_empty_tab_content(), revision="rev-1")
+        post = _two_tab_doc(_populated_tab_content(), revision="rev-2")
+        patchers, _ = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "append_markdown",
+                    {"doc_id": "doc-2tab", "tab_id": "t.second", "markdown": _BACKUP_MD},
+                )
+        assert not result.is_error
+        data = result.data
+        assert data["post_blocks"] > 0
+        assert data["applied"] is True
+
+
+# ---------------------------------------------------------------------------
+# tabId scoping on every write request (issue #48 root cause)
+# ---------------------------------------------------------------------------
+
+
+def _iter_locations_and_ranges(node: Any):
+    """Yield every dict that is the value of a 'location' or 'range' key."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("location", "range") and isinstance(value, dict):
+                yield value
+            yield from _iter_locations_and_ranges(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _iter_locations_and_ranges(item)
+
+
+class TestStampTabId:
+    """Unit tests for _stamp_tab_id (issue #48)."""
+
+    def test_adds_tab_id_to_location_and_range(self) -> None:
+        from verified_googledocs_mcp.markdown_mutations import _stamp_tab_id
+
+        reqs = [
+            {"insertText": {"location": {"index": 5}, "text": "x"}},
+            {"updateParagraphStyle": {"range": {"startIndex": 1, "endIndex": 3}}},
+        ]
+        _stamp_tab_id(reqs, "tab-9")
+        assert reqs[0]["insertText"]["location"]["tabId"] == "tab-9"
+        assert reqs[1]["updateParagraphStyle"]["range"]["tabId"] == "tab-9"
+
+    def test_preserves_existing_tab_id(self) -> None:
+        from verified_googledocs_mcp.markdown_mutations import _stamp_tab_id
+
+        reqs = [
+            {"deleteContentRange": {"range": {"startIndex": 1, "endIndex": 3, "tabId": "keep"}}}
+        ]
+        _stamp_tab_id(reqs, "tab-9")
+        assert reqs[0]["deleteContentRange"]["range"]["tabId"] == "keep"
+
+    def test_skips_implicit_tabless_doc(self) -> None:
+        from verified_googledocs_mcp.docs import IMPLICIT_TAB_ID
+        from verified_googledocs_mcp.markdown_mutations import _stamp_tab_id
+
+        reqs = [{"insertText": {"location": {"index": 5}, "text": "x"}}]
+        _stamp_tab_id(reqs, IMPLICIT_TAB_ID)
+        assert "tabId" not in reqs[0]["insertText"]["location"]
+
+
+class TestSecondaryTabWriteScoping:
+    """Every request a markdown write issues must carry the target tabId, so a
+    secondary-tab write lands in that tab rather than the first tab (issue #48)."""
+
+    @pytest.mark.asyncio
+    async def test_replace_tab_scopes_all_requests_to_target_tab(self) -> None:
+        pre = _two_tab_doc(_populated_tab_content(), revision="rev-1")
+        post = _two_tab_doc(_populated_tab_content(), revision="rev-2")
+        patchers, mock_service = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                await client.call_tool(
+                    "replace_tab_markdown",
+                    {"doc_id": "doc-2tab", "tab_id": "t.second", "markdown": _BACKUP_MD},
+                )
+        body = mock_service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+        locs = list(_iter_locations_and_ranges(body["requests"]))
+        assert locs, "expected location/range objects in the batchUpdate requests"
+        assert all(o.get("tabId") == "t.second" for o in locs)
+
+    @pytest.mark.asyncio
+    async def test_append_scopes_all_requests_to_target_tab(self) -> None:
+        pre = _two_tab_doc(_empty_tab_content(), revision="rev-1")
+        post = _two_tab_doc(_populated_tab_content(), revision="rev-2")
+        patchers, mock_service = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                await client.call_tool(
+                    "append_markdown",
+                    {"doc_id": "doc-2tab", "tab_id": "t.second", "markdown": _BACKUP_MD},
+                )
+        body = mock_service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+        locs = list(_iter_locations_and_ranges(body["requests"]))
+        assert locs
+        assert all(o.get("tabId") == "t.second" for o in locs)

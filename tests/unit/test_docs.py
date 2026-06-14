@@ -158,12 +158,24 @@ class TestFindSections:
         matches = find_sections_in(doc, "Introduction", "tab-1")
         assert matches[0].computed_at_revision == "rev-001"
 
-    def test_find_returns_start_end_indices(self) -> None:
+    def test_find_returns_section_span_to_next_heading(self) -> None:
+        # #49: the range must span the whole section (heading through body),
+        # ending at the start of the next heading — not just the heading line.
+        # "Introduction" starts at 1; the next heading ("Methods") starts at 64.
         doc = multi_tab_doc()
         matches = find_sections_in(doc, "Introduction", "tab-1")
         m = matches[0]
         assert m.start_index == 1
-        assert m.end_index == 16
+        assert m.end_index == 64  # start of "Methods", not the heading's own end (16)
+
+    def test_find_last_heading_spans_to_tab_end(self) -> None:
+        # #49: a section with no following heading runs to the end of the tab
+        # body. "Methods" is the last heading in tab-1; the tab body ends at 130.
+        doc = multi_tab_doc()
+        matches = find_sections_in(doc, "Methods", "tab-1")
+        m = matches[0]
+        assert m.start_index == 64
+        assert m.end_index == 130
 
     def test_find_multiple_headings_matched(self) -> None:
         # Both "Introduction" and "Methods" headings should be found with

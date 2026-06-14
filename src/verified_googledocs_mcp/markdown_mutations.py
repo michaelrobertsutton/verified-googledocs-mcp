@@ -23,7 +23,7 @@ import difflib
 from typing import Any
 from urllib.parse import urlparse
 
-from .docs import _available_tab_ids, _find_tab_body, fetch_document
+from .docs import IMPLICIT_TAB_ID, _available_tab_ids, _find_tab_body, fetch_document
 from .markdown import to_markdown
 from .markdown_writer import UnsupportedMarkdown, compile_markdown
 from .mutations import _translate_http_error
@@ -131,6 +131,76 @@ def _structural_total(counts: dict[str, int]) -> int:
 # ---------------------------------------------------------------------------
 # Markdown write pipelines
 # ---------------------------------------------------------------------------
+
+
+def _stamp_tab_id(node: Any, tab_id: str) -> None:
+    """Recursively stamp tab_id onto every location/range in a request tree (#48).
+
+    compile_markdown emits ``location``/``range`` objects with only an ``index``
+    (or start/end), no ``tabId``. Without a ``tabId`` the Docs API resolves the
+    index against the document's *first* tab segment, so a write aimed at a
+    secondary tab errors (index past the first tab's end) or lands in the wrong
+    tab — leaving the target empty. Stamping the target ``tabId`` onto every
+    location/range scopes the whole batch to the intended tab. ``setdefault``
+    preserves any tabId already set on hand-built requests.
+
+    Tabless documents use the implicit "_body" tab; their body segment is
+    addressed without a tabId, so stamping is skipped.
+    """
+    if not tab_id or tab_id == IMPLICIT_TAB_ID:
+        return
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("location", "range") and isinstance(value, dict):
+                value.setdefault("tabId", tab_id)
+            _stamp_tab_id(value, tab_id)
+    elif isinstance(node, list):
+        for item in node:
+            _stamp_tab_id(item, tab_id)
+
+
+def _tab_has_content(body: dict[str, Any]) -> bool:
+    """True if the tab body holds any real content (text, table, or inline object).
+
+    A body containing only an empty paragraph (just a trailing newline) counts
+    as empty. Mirrors what read_document would render as a non-empty tab.
+    """
+    for elem in body.get("content", []):
+        if "table" in elem:
+            return True
+        para = elem.get("paragraph")
+        if not para:
+            continue  # sectionBreak, tableOfContents, etc.
+        for inline in para.get("elements", []):
+            if "textRun" in inline:
+                if inline["textRun"].get("content", "").strip():
+                    return True
+            elif any(k in inline for k in ("inlineObjectElement", "person", "footnoteReference")):
+                return True
+    return False
+
+
+def _flag_unconfirmed_write(evidence: dict[str, Any], post_body: dict[str, Any]) -> dict[str, Any]:
+    """Downgrade a false success to applied=False when nothing landed (issue #48).
+
+    A markdown write that compiled non-empty content but whose post-write re-read
+    leaves the targeted tab empty did not land — e.g. a write the API accepted
+    but that wrote no content into a secondary tab. The verified-write contract
+    forbids reporting applied=True for a write that left no trace, so flip
+    applied to False and say why.
+
+    The signal is the *whole post tab body* being empty, not the windowed
+    post_blocks count: an evidence window that simply doesn't line up with where
+    content landed must not be mistaken for a failed write.
+    """
+    if evidence.get("input_blocks", 0) > 0 and not _tab_has_content(post_body):
+        evidence["applied"] = False
+        diffs = evidence.setdefault("structural_diff", [])
+        diffs.append(
+            "Write not confirmed: the targeted tab is still empty after the write, so "
+            "the content did not land. Reported as applied=false rather than a false success."
+        )
+    return evidence
 
 
 def execute_replace_range_markdown(
@@ -256,6 +326,7 @@ def execute_replace_range_markdown(
             }
         }
     ] + compiled_requests
+    _stamp_tab_id(requests, tab_id)
 
     body_payload: dict[str, Any] = {
         "requests": requests,
@@ -305,6 +376,7 @@ def execute_replace_range_markdown(
         applied=True,
         audit_logged=True,
     )
+    evidence = _flag_unconfirmed_write(evidence, post_body)
 
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
@@ -422,6 +494,7 @@ def execute_replace_tab_markdown(
             }
         )
     requests.extend(compiled_requests)
+    _stamp_tab_id(requests, tab_id)
 
     body_payload: dict[str, Any] = {
         "requests": requests,
@@ -454,6 +527,7 @@ def execute_replace_tab_markdown(
         applied=True,
         audit_logged=True,
     )
+    evidence = _flag_unconfirmed_write(evidence, post_body)
 
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
@@ -524,6 +598,7 @@ def execute_append_markdown(
         }
     }
     requests: list[dict[str, Any]] = [newline_request, *compiled_requests]
+    _stamp_tab_id(requests, tab_id)
 
     # --- Dry run -------------------------------------------------------------
     if dry_run:
@@ -580,6 +655,7 @@ def execute_append_markdown(
         applied=True,
         audit_logged=True,
     )
+    evidence = _flag_unconfirmed_write(evidence, post_body)
 
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
