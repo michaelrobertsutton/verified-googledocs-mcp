@@ -136,7 +136,12 @@ class TestFindSections:
         assert matches, "Text Hazards heading not found in t.0"
         m = matches[0]
         assert "Text Hazards" in m["matched_text"]
-        assert (m["start_index"], m["end_index"]) == (1, 14)
+        # #49: the range spans the whole section (heading through its body, to the
+        # next heading or end of tab), not just the heading line. "Text Hazards"
+        # starts at index 1 and is followed by section content, so the range must
+        # extend past the heading's own end (~14).
+        assert m["start_index"] == 1
+        assert m["end_index"] > 14
         # Stamped with a live revisionId — present and non-empty (it changes on
         # every edit, so we don't assert a fixed value).
         assert m["computed_at_revision"]

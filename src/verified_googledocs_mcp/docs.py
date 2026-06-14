@@ -228,11 +228,17 @@ def find_sections_in(
     heading: str,
     tab_id: str,
 ) -> list[SectionMatch]:
-    """Return heading matches with their document ranges, stamped with revision ID.
+    """Return heading matches with their *section* ranges, stamped with revision ID.
 
     Use find_sections (the MCP tool) when you need section ranges for targeted
-    edits. The computed_at_revision stamp is consumed by range-editing tools in
-    later milestones to refuse stale ranges. M1 stamps; M2+ enforces.
+    edits. The returned range spans the whole section: from the matched heading
+    through to the start of the next heading (of any level), or to the end of
+    the tab body if no later heading exists. This is the range
+    replace_range_markdown consumes, so the documented pairing replaces the
+    entire section (heading *and* body), not just the heading line (issue #49).
+
+    The computed_at_revision stamp is consumed by range-editing tools to refuse
+    stale ranges.
 
     Matching is case-insensitive and substring-based so that partial heading
     queries return useful results.
@@ -246,33 +252,45 @@ def find_sections_in(
 
     revision_id = doc.get("revisionId", "")
     needle = heading.lower()
-    matches: list[SectionMatch] = []
+    content = body.get("content", [])
 
-    for elem in body.get("content", []):
+    # The end of the tab body: the largest endIndex across all structural
+    # elements. A section with no following heading runs to here.
+    tab_end = max((e.get("endIndex", 0) for e in content if "endIndex" in e), default=0)
+
+    # Collect every heading paragraph in document order with its start index and
+    # full text. The section for heading i ends at the start of heading i+1.
+    headings: list[tuple[int, str]] = []  # (start_index, full_text)
+    for elem in content:
         if "paragraph" not in elem:
             continue
         para = elem["paragraph"]
         style = para.get("paragraphStyle", {}).get("namedStyleType", "NORMAL_TEXT")
         if not style.startswith("HEADING_"):
             continue
-
-        # Collect the full text of the heading paragraph.
-        text_parts: list[str] = []
-        for inline in para.get("elements", []):
-            if "textRun" in inline:
-                text_parts.append(inline["textRun"].get("content", ""))
+        text_parts = [
+            inline["textRun"].get("content", "")
+            for inline in para.get("elements", [])
+            if "textRun" in inline
+        ]
         full_text = "".join(text_parts).rstrip("\n")
+        headings.append((elem.get("startIndex", 0), full_text))
 
-        if needle in full_text.lower():
-            matches.append(
-                SectionMatch(
-                    heading=heading,
-                    matched_text=full_text,
-                    start_index=elem.get("startIndex", 0),
-                    end_index=elem.get("endIndex", 0),
-                    computed_at_revision=revision_id,
-                )
+    matches: list[SectionMatch] = []
+    for i, (start_index, full_text) in enumerate(headings):
+        if needle not in full_text.lower():
+            continue
+        # Section end = start of the next heading, else end of tab body.
+        end_index = headings[i + 1][0] if i + 1 < len(headings) else tab_end
+        matches.append(
+            SectionMatch(
+                heading=heading,
+                matched_text=full_text,
+                start_index=start_index,
+                end_index=end_index,
+                computed_at_revision=revision_id,
             )
+        )
 
     return matches
 

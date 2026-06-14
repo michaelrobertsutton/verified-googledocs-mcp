@@ -768,3 +768,145 @@ class TestMiddlewareEnforcement:
                 )
         assert not result.is_error
         assert "applied" in result.data
+
+
+# ---------------------------------------------------------------------------
+# Secondary-tab false success (issue #48)
+# ---------------------------------------------------------------------------
+
+
+def _two_tab_doc(
+    second_tab_content: list[dict[str, Any]], revision: str = "rev-1"
+) -> dict[str, Any]:
+    """Two-tab doc: a populated first tab 't.0' and a second tab 't.second'."""
+    first = {
+        "content": [
+            {
+                "startIndex": 1,
+                "endIndex": 12,
+                "paragraph": {
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                    "elements": [
+                        {"startIndex": 1, "endIndex": 12, "textRun": {"content": "First tab.\n"}}
+                    ],
+                },
+            }
+        ]
+    }
+    return {
+        "documentId": "doc-2tab",
+        "revisionId": revision,
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "t.0", "title": "Body", "index": 0},
+                "documentTab": {"body": first},
+                "childTabs": [],
+            },
+            {
+                "tabProperties": {"tabId": "t.second", "title": "Backup", "index": 1},
+                "documentTab": {"body": {"content": second_tab_content}},
+                "childTabs": [],
+            },
+        ],
+    }
+
+
+def _empty_tab_content() -> list[dict[str, Any]]:
+    """A tab body holding only an empty paragraph (no real content)."""
+    return [
+        {
+            "startIndex": 1,
+            "endIndex": 2,
+            "paragraph": {
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                "elements": [{"startIndex": 1, "endIndex": 2, "textRun": {"content": "\n"}}],
+            },
+        }
+    ]
+
+
+def _populated_tab_content() -> list[dict[str, Any]]:
+    """A tab body holding a heading and a paragraph (a landed write)."""
+    return [
+        {
+            "startIndex": 2,
+            "endIndex": 18,
+            "paragraph": {
+                "paragraphStyle": {"namedStyleType": "HEADING_2"},
+                "elements": [
+                    {"startIndex": 2, "endIndex": 18, "textRun": {"content": "Backup content\n"}}
+                ],
+            },
+        },
+        {
+            "startIndex": 18,
+            "endIndex": 34,
+            "paragraph": {
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                "elements": [
+                    {"startIndex": 18, "endIndex": 34, "textRun": {"content": "Body paragraph.\n"}}
+                ],
+            },
+        },
+    ]
+
+
+_BACKUP_MD = "## Backup content\n\nBody paragraph."
+
+
+class TestSecondaryTabFalseSuccess:
+    """A write the API accepted but that left the tab empty must report
+    applied=false, never a false success (issue #48)."""
+
+    @pytest.mark.asyncio
+    async def test_append_to_empty_secondary_tab_reports_not_applied(self) -> None:
+        pre = _two_tab_doc(_empty_tab_content(), revision="rev-1")
+        post = _two_tab_doc(
+            _empty_tab_content(), revision="rev-2"
+        )  # still empty: write did not land
+        patchers, _ = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "append_markdown",
+                    {"doc_id": "doc-2tab", "tab_id": "t.second", "markdown": _BACKUP_MD},
+                )
+        assert not result.is_error
+        data = result.data
+        assert data["post_blocks"] == 0
+        assert data["input_blocks"] > 0
+        assert data["applied"] is False  # the bug was: True
+        assert any("did not land" in d for d in data.get("structural_diff", []))
+
+    @pytest.mark.asyncio
+    async def test_replace_tab_to_empty_secondary_tab_reports_not_applied(self) -> None:
+        pre = _two_tab_doc(_empty_tab_content(), revision="rev-1")
+        post = _two_tab_doc(_empty_tab_content(), revision="rev-2")
+        patchers, _ = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "replace_tab_markdown",
+                    {"doc_id": "doc-2tab", "tab_id": "t.second", "markdown": _BACKUP_MD},
+                )
+        assert not result.is_error
+        data = result.data
+        assert data["post_blocks"] == 0
+        assert data["applied"] is False
+
+    @pytest.mark.asyncio
+    async def test_append_that_lands_in_secondary_tab_is_applied(self) -> None:
+        # Control: when the post-read shows the content landed, applied stays True.
+        pre = _two_tab_doc(_empty_tab_content(), revision="rev-1")
+        post = _two_tab_doc(_populated_tab_content(), revision="rev-2")
+        patchers, _ = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "append_markdown",
+                    {"doc_id": "doc-2tab", "tab_id": "t.second", "markdown": _BACKUP_MD},
+                )
+        assert not result.is_error
+        data = result.data
+        assert data["post_blocks"] > 0
+        assert data["applied"] is True

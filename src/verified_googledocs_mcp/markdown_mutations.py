@@ -133,6 +133,50 @@ def _structural_total(counts: dict[str, int]) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _tab_has_content(body: dict[str, Any]) -> bool:
+    """True if the tab body holds any real content (text, table, or inline object).
+
+    A body containing only an empty paragraph (just a trailing newline) counts
+    as empty. Mirrors what read_document would render as a non-empty tab.
+    """
+    for elem in body.get("content", []):
+        if "table" in elem:
+            return True
+        para = elem.get("paragraph")
+        if not para:
+            continue  # sectionBreak, tableOfContents, etc.
+        for inline in para.get("elements", []):
+            if "textRun" in inline:
+                if inline["textRun"].get("content", "").strip():
+                    return True
+            elif any(k in inline for k in ("inlineObjectElement", "person", "footnoteReference")):
+                return True
+    return False
+
+
+def _flag_unconfirmed_write(evidence: dict[str, Any], post_body: dict[str, Any]) -> dict[str, Any]:
+    """Downgrade a false success to applied=False when nothing landed (issue #48).
+
+    A markdown write that compiled non-empty content but whose post-write re-read
+    leaves the targeted tab empty did not land — e.g. a write the API accepted
+    but that wrote no content into a secondary tab. The verified-write contract
+    forbids reporting applied=True for a write that left no trace, so flip
+    applied to False and say why.
+
+    The signal is the *whole post tab body* being empty, not the windowed
+    post_blocks count: an evidence window that simply doesn't line up with where
+    content landed must not be mistaken for a failed write.
+    """
+    if evidence.get("input_blocks", 0) > 0 and not _tab_has_content(post_body):
+        evidence["applied"] = False
+        diffs = evidence.setdefault("structural_diff", [])
+        diffs.append(
+            "Write not confirmed: the targeted tab is still empty after the write, so "
+            "the content did not land. Reported as applied=false rather than a false success."
+        )
+    return evidence
+
+
 def execute_replace_range_markdown(
     *,
     service: Any,
@@ -305,6 +349,7 @@ def execute_replace_range_markdown(
         applied=True,
         audit_logged=True,
     )
+    evidence = _flag_unconfirmed_write(evidence, post_body)
 
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
@@ -454,6 +499,7 @@ def execute_replace_tab_markdown(
         applied=True,
         audit_logged=True,
     )
+    evidence = _flag_unconfirmed_write(evidence, post_body)
 
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
@@ -580,6 +626,7 @@ def execute_append_markdown(
         applied=True,
         audit_logged=True,
     )
+    evidence = _flag_unconfirmed_write(evidence, post_body)
 
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
