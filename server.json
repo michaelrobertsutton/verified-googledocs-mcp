@@ -1,0 +1,36 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.michaelrobertsutton/verified-googledocs-mcp",
+  "description": "Google Docs MCP server with verified writes: every mutation re-reads the document and returns proof of what changed.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/michaelrobertsutton/verified-googledocs-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "verified-googledocs-mcp",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "VERIFIED_GOOGLEDOCS_MCP_CREDENTIALS",
+          "description": "Path to the OAuth client-secret JSON. Defaults to ~/.config/verified-googledocs-mcp/credentials.json.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "VERIFIED_GOOGLEDOCS_MCP_AUDIT_EXCERPTS",
+          "description": "Set to a falsey value (0/false/no/off) to redact before/after content excerpts from the local audit log.",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
