@@ -9,7 +9,7 @@
 
 An MCP server for Google Docs whose writes carry proof. Every mutating tool re-reads the affected content from the document after it writes and returns evidence of what actually changed: before/after excerpts, the match count, and the document revision before and after. A tool never reports success for an edit that did not land.
 
-> **Status:** all 14 tools are implemented, covered by an offline unit suite, and exercised against the real Google Docs and Drive APIs — every tool and every error code passes the [live acceptance gate](docs/acceptance-report.md). Install today [from source](#install); the `uvx`/`pip` path lands with the first PyPI release (`v0.1.0`). See [Status](#status).
+> **Status:** all 14 tools are implemented, covered by an offline unit suite, and exercised against the real Google Docs and Drive APIs — every tool and every error code passes the [live acceptance gate](docs/acceptance-report.md). Install with `uvx verified-googledocs-mcp`. See [Status](#status).
 
 ## The problem
 
@@ -154,9 +154,6 @@ one-time Google Cloud step, then registering the server with your MCP client.
 ### 2. Authorize once, in a terminal
 
 ```bash
-# from a clone (works today):
-uv run verified-googledocs-mcp auth
-# or, once published to PyPI:
 uvx verified-googledocs-mcp auth
 ```
 
@@ -170,22 +167,20 @@ the server, because MCP clients start the server headless.
 
 ### 3. Run it
 
-**From source (works today).** Clone the repo; `uv` resolves dependencies on first run:
-
-```bash
-git clone https://github.com/michaelrobertsutton/verified-googledocs-mcp
-cd verified-googledocs-mcp
-uv run verified-googledocs-mcp        # starts the stdio server
-```
-
-**From PyPI (with the `v0.1.0` release).** Once published, no clone is needed:
-
 ```bash
 uvx verified-googledocs-mcp           # downloads + runs in one step
 # or: pip install verified-googledocs-mcp
 ```
 
 Then register the server with your MCP client.
+
+**From source.** To run from a local clone instead:
+
+```bash
+git clone https://github.com/michaelrobertsutton/verified-googledocs-mcp
+cd verified-googledocs-mcp
+uv run verified-googledocs-mcp
+```
 
 ### Claude Code
 
@@ -197,50 +192,17 @@ cd verified-googledocs-mcp
 claude  # .mcp.json is loaded automatically
 ```
 
-**Use it across all your projects (user scope).** To make the server available in every Claude Code session on this machine — not just inside the cloned repo — register it at user scope with a pinned directory:
+**Use it across all your projects (user scope).** Register it once at user scope:
 
 ```bash
-claude mcp add verified-googledocs-mcp --scope user -- \
-  /opt/homebrew/bin/uv run --directory /path/to/verified-googledocs-mcp verified-googledocs-mcp
+claude mcp add verified-googledocs-mcp --scope user -- uvx verified-googledocs-mcp
 ```
 
-This writes to `~/.claude.json` (the user-scope store). The `--directory` flag pins `uv` to resolve the project from the repo path, so the command works regardless of which directory your Claude Code session starts from. Replace `/path/to/verified-googledocs-mcp` with your actual clone path.
-
-The full `uv` path (`/opt/homebrew/bin/uv`) avoids PATH gaps in headless launches — see the PATH note below for details.
+This writes to `~/.claude.json` and makes the server available in every Claude Code session on this machine. If `uvx` is not on Claude Code's PATH, use the full path (find it with `which uvx`).
 
 ### Claude Desktop and other clients
 
 Most clients use the standard `mcpServers` config block. Add the following to your client's config file:
-
-```jsonc
-{
-  "mcpServers": {
-    "verified-googledocs-mcp": {
-      "command": "uv",
-      "args": ["run", "verified-googledocs-mcp"],
-      "cwd": "/path/to/verified-googledocs-mcp"
-    }
-  }
-}
-```
-
-**PATH note for headless clients:** Claude Desktop and similar clients launch the server as a subprocess with a minimal `PATH` that may not include Homebrew or user-local bins. If `uv` is not found, use its full path:
-
-```jsonc
-{
-  "mcpServers": {
-    "verified-googledocs-mcp": {
-      "command": "/opt/homebrew/bin/uv",
-      "args": ["run", "verified-googledocs-mcp"],
-      "cwd": "/path/to/verified-googledocs-mcp"
-    }
-  }
-}
-```
-
-Find the full path with `which uv`. On Apple Silicon the Homebrew prefix is `/opt/homebrew`; on Intel Mac it is `/usr/local`.
-
-**Once published to PyPI**, drop the clone and the `cwd`/`--directory` pinning entirely and let `uvx` fetch the package:
 
 ```jsonc
 {
@@ -253,7 +215,23 @@ Find the full path with `which uv`. On Apple Silicon the Homebrew prefix is `/op
 }
 ```
 
+**PATH note for headless clients:** Claude Desktop and similar clients launch the server as a subprocess with a minimal `PATH` that may not include Homebrew or user-local bins. If `uvx` is not found, use its full path (`"command": "/opt/homebrew/bin/uvx"`). Find it with `which uvx`. On Apple Silicon the Homebrew prefix is `/opt/homebrew`; on Intel Mac it is `/usr/local`.
+
 **Startup-timeout note.** The first `uvx` launch downloads the package and its dependencies, which can exceed a client's MCP startup timeout and surface as a failed connection. Pre-warm the cache once in a terminal by running the `auth` command (`uvx verified-googledocs-mcp auth`) — you do this anyway, and it installs the package into the `uvx` cache so the client's launch is fast.
+
+**From source.** If you prefer to run from a local clone instead of PyPI:
+
+```jsonc
+{
+  "mcpServers": {
+    "verified-googledocs-mcp": {
+      "command": "/opt/homebrew/bin/uv",
+      "args": ["run", "verified-googledocs-mcp"],
+      "cwd": "/path/to/verified-googledocs-mcp"
+    }
+  }
+}
+```
 
 **Logs / stderr.** The server logs to stderr, which MCP clients capture rather than show inline. If a connection or a tool call fails, check the client's MCP logs — for Claude Desktop on macOS, `~/Library/Logs/Claude/mcp*.log`. An `AUTH_EXPIRED` envelope there means the token is missing or expired; re-run the `auth` command.
 
