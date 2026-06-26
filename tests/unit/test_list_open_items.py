@@ -4,7 +4,7 @@ Coverage:
   - Merges open Drive comments and Docs suggestions into one response.
   - Comments are labeled scope='document'; suggestions carry tab_id.
   - tab_id provided: only suggestions for that tab are returned.
-  - tab_id omitted: suggestions for all tabs are merged.
+  - include_all_tabs=True: suggestions for all tabs are merged.
   - Open comments present but no suggestions: returns empty suggestions list.
   - Suggestions present but no open comments: returns empty comments list.
   - list_open_items returns the doc_id in the response.
@@ -213,7 +213,9 @@ class TestListOpenItemsMerge:
         p1, p2, p3 = _make_patches(doc, drive_comments=comments)
         with p1, p2, p3:
             async with Client(mcp) as client:
-                result = await client.call_tool("list_open_items", {"doc_id": "doc-1"})
+                result = await client.call_tool(
+                    "list_open_items", {"doc_id": "doc-1", "include_all_tabs": True}
+                )
         assert not result.is_error
         data = result.data
         assert "open_comments" in data
@@ -227,7 +229,9 @@ class TestListOpenItemsMerge:
         p1, p2, p3 = _make_patches(doc)
         with p1, p2, p3:
             async with Client(mcp) as client:
-                result = await client.call_tool("list_open_items", {"doc_id": "doc-clean"})
+                result = await client.call_tool(
+                    "list_open_items", {"doc_id": "doc-clean", "include_all_tabs": True}
+                )
         assert result.data["doc_id"] == "doc-clean"
 
 
@@ -239,7 +243,9 @@ class TestListOpenItemsComments:
         p1, p2, p3 = _make_patches(doc, drive_comments=comments)
         with p1, p2, p3:
             async with Client(mcp) as client:
-                result = await client.call_tool("list_open_items", {"doc_id": "doc-clean"})
+                result = await client.call_tool(
+                    "list_open_items", {"doc_id": "doc-clean", "include_all_tabs": True}
+                )
         data = result.data
         assert len(data["open_comments"]) == 1
         assert data["open_comments"][0]["scope"] == "document"
@@ -255,7 +261,9 @@ class TestListOpenItemsComments:
         p1, p2, p3 = _make_patches(doc, drive_comments=comments)
         with p1, p2, p3:
             async with Client(mcp) as client:
-                result = await client.call_tool("list_open_items", {"doc_id": "doc-clean"})
+                result = await client.call_tool(
+                    "list_open_items", {"doc_id": "doc-clean", "include_all_tabs": True}
+                )
         open_ids = [c["comment_id"] for c in result.data["open_comments"]]
         assert "c-open" in open_ids
         assert "c-resolved" not in open_ids
@@ -266,7 +274,9 @@ class TestListOpenItemsComments:
         p1, p2, p3 = _make_patches(doc, drive_comments=[])
         with p1, p2, p3:
             async with Client(mcp) as client:
-                result = await client.call_tool("list_open_items", {"doc_id": "doc-clean"})
+                result = await client.call_tool(
+                    "list_open_items", {"doc_id": "doc-clean", "include_all_tabs": True}
+                )
         assert result.data["open_comments"] == []
 
 
@@ -299,16 +309,44 @@ class TestListOpenItemsSuggestions:
         assert "s-b" not in suggestion_ids
 
     @pytest.mark.asyncio
-    async def test_no_tab_id_merges_all_tabs(self) -> None:
-        """When tab_id is omitted, suggestions from all tabs are merged."""
+    async def test_include_all_tabs_merges_all_tabs(self) -> None:
+        """When include_all_tabs is true, suggestions from all tabs are merged."""
         doc = _two_tab_doc(tab_a="tab-a", tab_b="tab-b", suggestion_a="s-a", suggestion_b="s-b")
         p1, p2, p3 = _make_patches(doc)
         with p1, p2, p3:
             async with Client(mcp) as client:
-                result = await client.call_tool("list_open_items", {"doc_id": "doc-2"})
+                result = await client.call_tool(
+                    "list_open_items", {"doc_id": "doc-2", "include_all_tabs": True}
+                )
         suggestion_ids = [s["suggestion_id"] for s in result.data["pending_suggestions"]]
         assert "s-a" in suggestion_ids
         assert "s-b" in suggestion_ids
+
+    @pytest.mark.asyncio
+    async def test_missing_scope_returns_invalid_input(self) -> None:
+        doc = _two_tab_doc()
+        p1, p2, p3 = _make_patches(doc)
+        with p1, p2, p3:
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "list_open_items", {"doc_id": "doc-2"}, raise_on_error=False
+                )
+        assert result.is_error
+        assert "INVALID_INPUT" in str(result.content)
+
+    @pytest.mark.asyncio
+    async def test_tab_id_and_include_all_tabs_returns_invalid_input(self) -> None:
+        doc = _two_tab_doc()
+        p1, p2, p3 = _make_patches(doc)
+        with p1, p2, p3:
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "list_open_items",
+                    {"doc_id": "doc-2", "tab_id": "tab-a", "include_all_tabs": True},
+                    raise_on_error=False,
+                )
+        assert result.is_error
+        assert "INVALID_INPUT" in str(result.content)
 
     @pytest.mark.asyncio
     async def test_no_suggestions_returns_empty_list(self) -> None:

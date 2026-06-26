@@ -7,6 +7,7 @@ vs revision_after can be verified.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -20,6 +21,7 @@ from tests.unit.fixtures.markdown_tools import (
     doc_with_image,
     simple_markdown_doc,
     doc_with_heading_and_table,
+    doc_with_table_cell_image,
 )
 
 
@@ -67,6 +69,48 @@ def _apply_all(patchers):
     for p in patchers:
         stack.enter_context(p)
     return stack
+
+
+def _error_payload(result: Any) -> dict[str, Any]:
+    assert result.is_error
+    assert result.content
+    return json.loads(getattr(result.content[0], "text", ""))
+
+
+def _doc_with_single_paragraph_at(
+    text: str,
+    *,
+    start: int,
+    revision: str = "rev-2",
+    style: str = "NORMAL_TEXT",
+) -> dict[str, Any]:
+    raw = text + "\n"
+    end = start + len(raw)
+    body = {
+        "content": [
+            {
+                "startIndex": start,
+                "endIndex": end,
+                "paragraph": {
+                    "paragraphStyle": {"namedStyleType": style},
+                    "elements": [
+                        {"startIndex": start, "endIndex": end, "textRun": {"content": raw}}
+                    ],
+                },
+            }
+        ]
+    }
+    return {
+        "documentId": "doc-test",
+        "revisionId": revision,
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "tab-1", "title": "Tab", "index": 0},
+                "documentTab": {"body": body},
+                "childTabs": [],
+            }
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -141,8 +185,7 @@ class TestReplaceRangeMarkdown:
                     },
                     raise_on_error=False,
                 )
-        content_str = str(result.content)
-        assert "True" in content_str  # retryable: True
+        assert _error_payload(result)["retryable"] is True
 
     @pytest.mark.asyncio
     async def test_unsupported_markdown_returns_error(self) -> None:
@@ -191,9 +234,29 @@ class TestReplaceRangeMarkdown:
         assert "INVALID_INPUT" in str(result.content)
 
     @pytest.mark.asyncio
+    async def test_structural_guardrail_refuses_table_cell_image_loss(self) -> None:
+        pre = doc_with_table_cell_image(revision="rev-1")
+        post = doc_with_table_cell_image(revision="rev-2")
+        patchers, _ = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "replace_tab_markdown",
+                    {
+                        "doc_id": "doc-table-cell-image",
+                        "tab_id": "tab-1",
+                        "markdown": "| Header |\n|---|\n| replacement |",
+                        "allow_structural_loss": False,
+                    },
+                    raise_on_error=False,
+                )
+        assert result.is_error
+        assert "INVALID_INPUT" in str(result.content)
+
+    @pytest.mark.asyncio
     async def test_structural_guardrail_allows_with_flag(self) -> None:
         pre = doc_with_heading_and_table(revision="rev-1")
-        post = simple_markdown_doc("Just text", revision="rev-2")
+        post = simple_markdown_doc("Just text, no table", revision="rev-2")
         patchers, _ = _build_mock_env(pre, post)
         with _apply_all(patchers):
             async with Client(mcp) as client:
@@ -257,6 +320,32 @@ class TestReplaceRangeMarkdown:
                 )
         assert result.is_error
         assert "TAB_NOT_FOUND" in str(result.content)
+
+    @pytest.mark.asyncio
+    async def test_unconfirmed_image_returns_verification_failed(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        pre = simple_markdown_doc("Hello world", revision="rev-1")
+        post = simple_markdown_doc("Hello world", revision="rev-2")
+        patchers, _ = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "insert_image",
+                    {
+                        "doc_id": "doc-test",
+                        "tab_id": "tab-1",
+                        "anchor": "Hello",
+                        "source": "https://example.com/img.png",
+                    },
+                    raise_on_error=False,
+                )
+        payload = _error_payload(result)
+        assert payload["error_code"] == "VERIFICATION_FAILED"
+        evidence = payload["diagnostics"]["evidence"]
+        assert evidence["inline_object_confirmed"] is False
+        assert evidence["audit_logged"] is True
+        audit_path = tmp_path / "verified-googledocs-mcp" / "audit.jsonl"
+        assert audit_path.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +477,7 @@ class TestReplaceTabMarkdown:
     @pytest.mark.asyncio
     async def test_structural_guardrail_allows_with_flag(self) -> None:
         pre = doc_with_image(revision="rev-1")
-        post = simple_markdown_doc("No image", revision="rev-2")
+        post = simple_markdown_doc("No image here", revision="rev-2")
         patchers, _ = _build_mock_env(pre, post)
         with _apply_all(patchers):
             async with Client(mcp) as client:
@@ -436,7 +525,7 @@ class TestAppendMarkdown:
     @pytest.mark.asyncio
     async def test_happy_path_returns_evidence(self) -> None:
         pre = simple_markdown_doc("Hello world", revision="rev-1")
-        post = simple_markdown_doc("Hello world\n\nNew paragraph", revision="rev-2")
+        post = _doc_with_single_paragraph_at("New paragraph", start=13, revision="rev-2")
         patchers, _ = _build_mock_env(pre, post)
         with _apply_all(patchers):
             async with Client(mcp) as client:
@@ -524,7 +613,9 @@ class TestAppendMarkdown:
         # simple_markdown_doc("Hello world") → paragraph "Hello world\n" at [1,13)
         # tab_end=13, insert_at=max(1,13-1)=12, content_start=13
         pre = simple_markdown_doc("Hello world", revision="rev-1")
-        post = simple_markdown_doc("Hello world", revision="rev-2")
+        post = _doc_with_single_paragraph_at(
+            "Appended", start=13, revision="rev-2", style="HEADING_2"
+        )
         patchers, mock_service = _build_mock_env(pre, post)
         with _apply_all(patchers):
             async with Client(mcp) as client:
@@ -696,7 +787,7 @@ class TestMiddlewareEnforcement:
     @pytest.mark.asyncio
     async def test_replace_range_markdown_carries_applied(self) -> None:
         pre = simple_markdown_doc("Hello", revision="rev-1")
-        post = simple_markdown_doc("Hello", revision="rev-2")
+        post = simple_markdown_doc("Hi", revision="rev-2")
         patchers, _ = _build_mock_env(pre, post)
         with _apply_all(patchers):
             async with Client(mcp) as client:
@@ -735,7 +826,7 @@ class TestMiddlewareEnforcement:
     @pytest.mark.asyncio
     async def test_append_markdown_carries_applied(self) -> None:
         pre = simple_markdown_doc("Hello", revision="rev-1")
-        post = simple_markdown_doc("Hello\nWorld", revision="rev-2")
+        post = _doc_with_single_paragraph_at("World", start=7, revision="rev-2")
         patchers, _ = _build_mock_env(pre, post)
         with _apply_all(patchers):
             async with Client(mcp) as client:
@@ -752,17 +843,17 @@ class TestMiddlewareEnforcement:
 
     @pytest.mark.asyncio
     async def test_insert_image_carries_applied(self) -> None:
-        pre = simple_markdown_doc("Hello world", revision="rev-1")
-        post = simple_markdown_doc("Hello world", revision="rev-2")
+        pre = doc_with_image(revision="rev-1")
+        post = doc_with_image(revision="rev-2")
         patchers, _ = _build_mock_env(pre, post)
         with _apply_all(patchers):
             async with Client(mcp) as client:
                 result = await client.call_tool(
                     "insert_image",
                     {
-                        "doc_id": "doc-test",
+                        "doc_id": "doc-image",
                         "tab_id": "tab-1",
-                        "anchor": "Hello",
+                        "anchor": "anchor text",
                         "source": "https://example.com/img.png",
                     },
                 )
@@ -859,7 +950,10 @@ class TestSecondaryTabFalseSuccess:
     applied=false, never a false success (issue #48)."""
 
     @pytest.mark.asyncio
-    async def test_append_to_empty_secondary_tab_reports_not_applied(self) -> None:
+    async def test_append_to_empty_secondary_tab_returns_verification_failed(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
         pre = _two_tab_doc(_empty_tab_content(), revision="rev-1")
         post = _two_tab_doc(
             _empty_tab_content(), revision="rev-2"
@@ -870,16 +964,21 @@ class TestSecondaryTabFalseSuccess:
                 result = await client.call_tool(
                     "append_markdown",
                     {"doc_id": "doc-2tab", "tab_id": "t.second", "markdown": _BACKUP_MD},
+                    raise_on_error=False,
                 )
-        assert not result.is_error
-        data = result.data
-        assert data["post_blocks"] == 0
-        assert data["input_blocks"] > 0
-        assert data["applied"] is False  # the bug was: True
-        assert any("did not land" in d for d in data.get("structural_diff", []))
+        payload = _error_payload(result)
+        assert payload["error_code"] == "VERIFICATION_FAILED"
+        evidence = payload["diagnostics"]["evidence"]
+        assert evidence["post_blocks"] == 0
+        assert evidence["input_blocks"] > 0
+        assert evidence["applied"] is False
+        assert evidence["audit_logged"] is True
+        audit_path = tmp_path / "verified-googledocs-mcp" / "audit.jsonl"
+        assert audit_path.exists()
+        assert len(audit_path.read_text(encoding="utf-8").splitlines()) == 1
 
     @pytest.mark.asyncio
-    async def test_replace_tab_to_empty_secondary_tab_reports_not_applied(self) -> None:
+    async def test_replace_tab_to_empty_secondary_tab_returns_verification_failed(self) -> None:
         pre = _two_tab_doc(_empty_tab_content(), revision="rev-1")
         post = _two_tab_doc(_empty_tab_content(), revision="rev-2")
         patchers, _ = _build_mock_env(pre, post)
@@ -888,11 +987,13 @@ class TestSecondaryTabFalseSuccess:
                 result = await client.call_tool(
                     "replace_tab_markdown",
                     {"doc_id": "doc-2tab", "tab_id": "t.second", "markdown": _BACKUP_MD},
+                    raise_on_error=False,
                 )
-        assert not result.is_error
-        data = result.data
-        assert data["post_blocks"] == 0
-        assert data["applied"] is False
+        payload = _error_payload(result)
+        assert payload["error_code"] == "VERIFICATION_FAILED"
+        evidence = payload["diagnostics"]["evidence"]
+        assert evidence["post_blocks"] == 0
+        assert evidence["applied"] is False
 
     @pytest.mark.asyncio
     async def test_append_that_lands_in_secondary_tab_is_applied(self) -> None:

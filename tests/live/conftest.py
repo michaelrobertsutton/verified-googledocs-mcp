@@ -29,6 +29,7 @@ Audit-log isolation
 ``_state_dir()`` honours ``XDG_STATE_HOME``. An autouse fixture points it at a
 per-test tmp dir, so (a) the suite never pollutes the real audit log and
 (b) "exactly one JSONL line per mutation" can be asserted in isolation.
+The same fixture allows ``diff_tab_vs_file`` to read only that per-test tmp dir.
 """
 
 from __future__ import annotations
@@ -180,4 +181,5 @@ def isolated_audit_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     Returns the path to the audit.jsonl this test's mutations will write to.
     """
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS", str(tmp_path))
     return tmp_path / "verified-googledocs-mcp" / "audit.jsonl"

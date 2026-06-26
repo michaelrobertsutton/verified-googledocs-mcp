@@ -373,6 +373,7 @@ class TestAddAnchoredComment:
     def _mock_drive(self, comment_raw: dict[str, Any]) -> Any:
         svc = MagicMock()
         svc.comments.return_value.create.return_value.execute.return_value = comment_raw
+        svc.comments.return_value.get.return_value.execute.return_value = comment_raw
         return svc
 
     def test_quote_not_found_raises_verify_error(self) -> None:
@@ -429,6 +430,7 @@ class TestAddAnchoredComment:
         assert evidence["applied"] is True
         for key in ("applied", "comment_id", "resolved", "reply_count", "audit_logged"):
             assert key in evidence
+        drive_svc.comments.return_value.get.assert_called_once()
 
     def test_empty_body_raises_invalid_input(self) -> None:
         drive_svc = MagicMock()

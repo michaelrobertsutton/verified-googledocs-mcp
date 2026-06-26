@@ -90,6 +90,44 @@ def _table_elem(start: int, end: int) -> dict[str, Any]:
     }
 
 
+def _table_elem_with_image(start: int, end: int) -> dict[str, Any]:
+    """A table whose first cell contains an inline image."""
+    return {
+        "startIndex": start,
+        "endIndex": end,
+        "table": {
+            "rows": 1,
+            "columns": 1,
+            "tableRows": [
+                {
+                    "tableCells": [
+                        {
+                            "content": [
+                                {
+                                    "startIndex": start + 2,
+                                    "endIndex": start + 4,
+                                    "paragraph": {
+                                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                                        "elements": [
+                                            {
+                                                "startIndex": start + 2,
+                                                "endIndex": start + 4,
+                                                "inlineObjectElement": {
+                                                    "inlineObjectId": "cell-img-001"
+                                                },
+                                            }
+                                        ],
+                                    },
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+        },
+    }
+
+
 def _chip_para(email: str, start: int, end: int) -> dict[str, Any]:
     """A paragraph containing a person chip."""
     return {
@@ -171,6 +209,25 @@ def doc_with_heading_and_table(revision: str = "rev-1") -> dict[str, Any]:
     }
 
 
+def doc_with_table_cell_image(revision: str = "rev-1") -> dict[str, Any]:
+    """Doc with an inline image nested inside a table cell."""
+    body = {
+        "content": [
+            _heading_para(1, "Table Image", 1, 13),
+            _table_elem_with_image(13, 30),
+        ]
+    }
+    return {
+        "documentId": "doc-table-cell-image",
+        "revisionId": revision,
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "tab-1", "title": "Tab", "index": 0},
+                "documentTab": {"body": body},
+                "childTabs": [],
+            }
+        ],
+    }
 def doc_with_image(revision: str = "rev-1") -> dict[str, Any]:
     """Doc with a heading and an inline image paragraph."""
     body = {

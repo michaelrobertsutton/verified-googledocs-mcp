@@ -113,7 +113,7 @@ Fourteen focused tools, each described by *when* to reach for it, replace the sl
 ### Comments and suggestions
 | Tool | What it does |
 |------|--------------|
-| `list_open_items` | Open comments **and** pending suggested edits in one call |
+| `list_open_items` | Open comments **and** pending suggested edits; pass `tab_id` or `include_all_tabs=true` |
 | `get_comment_thread` | Read a comment's full reply chain |
 | `add_anchored_comment` | Add a comment anchored to quoted text |
 | `reply_to_comment` | Reply to a comment |
@@ -136,7 +136,7 @@ Built incrementally; each tool ships with its verification and tests rather than
 | `replace_text` (verified) + enforcement middleware | done |
 | Comment tools + `list_open_items` | done |
 | Markdown write tools + `diff_tab_vs_file` | done |
-| Live acceptance gate (all 14 tools, all 12 error codes) | done — [report](docs/acceptance-report.md) |
+| Live acceptance gate | done for the initial release — [report](docs/acceptance-report.md); rerun before release |
 | PyPI packaging + publish workflow | done; first release `v0.1.0` |
 | MCP registry listing | published with `v0.1.0` |
 
@@ -244,6 +244,7 @@ This is a single-user, local server. It runs as you, over stdio, launched by you
 - **Scopes.** It requests `documents` and `drive`. The full `drive` scope is broader than editing alone needs, but the comment and suggestion tools (listing, replying to, and resolving comments on documents you already have) operate through the Drive API on arbitrary existing files, which the narrower `drive.file` scope cannot reach. `drive` is the minimum that covers the full tool set; if you don't need the comment tools, a fork could drop to a narrower scope.
 - **Credentials at rest.** The OAuth client secret lives at `~/.config/verified-googledocs-mcp/credentials.json`; the cached token (including the refresh token) is written to `~/.config/verified-googledocs-mcp/token.json` with owner-only permissions (`0600`, under a `0700` directory). Treat both as secrets: a leaked refresh token grants your full `drive`+`documents` access until you revoke it in your Google Account's security settings. Neither file is ever committed (both are gitignored).
 - **Audit log.** Every mutation appends to `~/.local/state/verified-googledocs-mcp/audit.jsonl` (also `0600`). Each line records the timestamp, document ID, tab ID, tool name, and the evidence payload — which includes before/after **content excerpts**. To log the metadata without the excerpts, set the environment variable `VERIFIED_GOOGLEDOCS_MCP_AUDIT_EXCERPTS` to a falsey value (`0`, `false`, `no`, or `off`); the `before`/`after` fields are then replaced with `"[redacted; N chars]"` and every other field is kept. Override the log location with `XDG_STATE_HOME`.
+- **Local file diffs.** `diff_tab_vs_file` reads a local file so it can compare a Doc tab with markdown on disk. It resolves symlinks before reading and only allows paths under `VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS` (a platform path-list; defaults to the server process working directory). It also refuses files larger than `VERIFIED_GOOGLEDOCS_MCP_MAX_DIFF_FILE_BYTES` (default `1000000`).
 
 ## Error codes
 
@@ -254,6 +255,7 @@ Failures return a typed envelope (`error_code`, `message`, `diagnostics`, `retry
 | `ZERO_MATCH` | Target not found after the full normalization ladder; diagnostics include the nearest near-miss |
 | `MATCH_COUNT_MISMATCH` | Found a different count than `expected_matches`; no edit made; all locations returned |
 | `REVISION_CONFLICT` | Document changed between read and write; retry after re-reading |
+| `VERIFICATION_FAILED` | A write was issued, but the post-write re-read did not verify the expected final state |
 | `STALE_RANGE` | A `find_sections` range was used after the document moved on; re-run `find_sections` |
 | `TAB_NOT_FOUND` | Unknown `tab_id`; available tabs listed |
 | `STRUCTURAL_BOUNDARY` | Match crosses a paragraph or table-cell boundary |

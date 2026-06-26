@@ -29,6 +29,18 @@
           "description": "Set to a falsey value (0/false/no/off) to redact before/after content excerpts from the local audit log.",
           "isRequired": false,
           "isSecret": false
+        },
+        {
+          "name": "VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS",
+          "description": "Path-list of roots diff_tab_vs_file may read from. Defaults to the server process working directory.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "VERIFIED_GOOGLEDOCS_MCP_MAX_DIFF_FILE_BYTES",
+          "description": "Maximum local file size diff_tab_vs_file may read, in bytes. Defaults to 1000000.",
+          "isRequired": false,
+          "isSecret": false
         }
       ]
     }

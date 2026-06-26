@@ -65,6 +65,30 @@ def _tab_raw(raw_texts: list[str]) -> dict:
     return {"body": {"content": content}}
 
 
+def _table_tab() -> dict:
+    """Build a tab with a real Docs table shape."""
+    return {
+        "body": {
+            "content": [
+                {
+                    "startIndex": 1,
+                    "endIndex": 50,
+                    "table": {
+                        "tableRows": [
+                            {
+                                "tableCells": [
+                                    {"content": [_para("Cell 1\n", 3)]},
+                                    {"content": [_para("Cell 2\n", 12)]},
+                                ]
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    }
+
+
 # ---------------------------------------------------------------------------
 # Rung 1: exact match
 # ---------------------------------------------------------------------------
@@ -299,6 +323,18 @@ class TestStructuralBoundary:
         tab = _tab(["Hello world foo"])
         result = locate("world foo", tab)
         assert result.rung == RUNG_EXACT
+
+    def test_table_cell_text_is_locatable(self):
+        tab = _table_tab()
+        result = locate("Cell 2", tab)
+        assert result.rung == RUNG_EXACT
+        assert result.spans[0] == (12, 18)
+
+    def test_needle_spanning_two_table_cells_is_boundary(self):
+        tab = _table_tab()
+        with pytest.raises(VerifyError) as exc_info:
+            locate("Cell 1\nCell 2", tab)
+        assert exc_info.value.envelope.error_code == ErrorCode.STRUCTURAL_BOUNDARY
 
 
 # ---------------------------------------------------------------------------

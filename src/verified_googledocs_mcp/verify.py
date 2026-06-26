@@ -47,6 +47,7 @@ class ErrorCode(Enum):
     ZERO_MATCH = "ZERO_MATCH"
     MATCH_COUNT_MISMATCH = "MATCH_COUNT_MISMATCH"
     REVISION_CONFLICT = "REVISION_CONFLICT"
+    VERIFICATION_FAILED = "VERIFICATION_FAILED"
     STALE_RANGE = "STALE_RANGE"
     TAB_NOT_FOUND = "TAB_NOT_FOUND"
     STRUCTURAL_BOUNDARY = "STRUCTURAL_BOUNDARY"
@@ -150,43 +151,46 @@ def _flatten_tab(tab_json: dict[str, Any]) -> tuple[str, list[int], list[int]]:
     u16_parts: list[int] = []
     block_parts: list[int] = []
 
-    para_idx = 0
+    def walk_content(elements: list[dict[str, Any]], para_idx: int) -> int:
+        for structural_element in elements:
+            if "paragraph" in structural_element:
+                para = structural_element["paragraph"]
+                inline_elements = para.get("elements", [])
+                for element in inline_elements:
+                    if "textRun" not in element:
+                        continue
+                    run = element["textRun"]
+                    content_str = run.get("content", "")
+                    api_start = element.get("startIndex", 0)
+                    api_end = element.get("endIndex", api_start)
 
-    for structural_element in content:
-        if "paragraph" in structural_element:
-            para = structural_element["paragraph"]
-            elements = para.get("elements", [])
-            for element in elements:
-                if "textRun" not in element:
-                    continue
-                run = element["textRun"]
-                content_str = run.get("content", "")
-                api_start = element.get("startIndex", 0)
-                api_end = element.get("endIndex", api_start)
+                    # Walk the run, assigning UTF-16 indices from api_start.
+                    u16_cursor = api_start
+                    for ch in content_str:
+                        text_parts.append(ch)
+                        u16_parts.append(u16_cursor)
+                        block_parts.append(para_idx)
+                        u16_cursor += _utf16_width(ch)
 
-                # Walk the run, assigning UTF-16 indices from api_start.
-                u16_cursor = api_start
-                for ch in content_str:
-                    text_parts.append(ch)
-                    u16_parts.append(u16_cursor)
-                    block_parts.append(para_idx)
-                    u16_cursor += _utf16_width(ch)
+                    # Integrity check: cursor should match endIndex.
+                    # (Soft assertion — mismatches would indicate API oddities or
+                    # inline objects within the text run, not a hard failure.)
+                    _ = api_end  # retained for future assertion logging
 
-                # Integrity check: cursor should match endIndex.
-                # (Soft assertion — mismatches would indicate API oddities or
-                # inline objects within the text run, not a hard failure.)
-                _ = api_end  # retained for future assertion logging
+                para_idx += 1
 
-            para_idx += 1
+            elif "table" in structural_element:
+                for row in structural_element["table"].get("tableRows", []):
+                    for cell in row.get("tableCells", []):
+                        para_idx = walk_content(cell.get("content", []), para_idx)
 
-        elif "tableCell" in structural_element:
-            # Recurse into table cells (nested body).
-            cell = structural_element["tableCell"]
-            cell_text, cell_u16, cell_block = _flatten_tab({"body": cell})
-            text_parts.extend(cell_text)
-            u16_parts.extend(cell_u16)
-            block_parts.extend([para_idx + b for b in cell_block])
-            para_idx += 1 + (max(cell_block) if cell_block else 0)
+            elif "tableCell" in structural_element:
+                # Defensive support for callers that pass a table cell as a body.
+                para_idx = walk_content(structural_element["tableCell"].get("content", []), para_idx)
+
+        return para_idx
+
+    walk_content(content, 0)
 
     full_text = "".join(text_parts)
     # Append sentinel.

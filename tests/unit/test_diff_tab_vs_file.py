@@ -19,6 +19,11 @@ from fastmcp import Client
 from verified_googledocs_mcp.server import mcp
 
 
+@pytest.fixture(autouse=True)
+def allow_tmp_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS", str(tmp_path))
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -196,6 +201,84 @@ class TestDiffTabVsFile:
                 )
         assert result.is_error
         assert "INVALID_INPUT" in str(result.content)
+
+    @pytest.mark.asyncio
+    async def test_outside_allowed_root_returns_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        monkeypatch.setenv("VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS", str(allowed))
+        outside = tmp_path / "outside.md"
+        outside.write_text("Hello\n", encoding="utf-8")
+        doc = _doc_with_content([_para("Hello\n", 1, 7)])
+
+        patchers = _mock_fetch_doc(doc)
+        with patchers[0], patchers[1], patchers[2], patchers[3]:
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "diff_tab_vs_file",
+                    {
+                        "doc_id": "doc-diff",
+                        "tab_id": "tab-1",
+                        "file_path": str(outside),
+                    },
+                    raise_on_error=False,
+                )
+        assert result.is_error
+        assert "outside the allowed roots" in str(result.content)
+
+    @pytest.mark.asyncio
+    async def test_symlink_escape_returns_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        monkeypatch.setenv("VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS", str(allowed))
+        outside = tmp_path / "outside.md"
+        outside.write_text("Hello\n", encoding="utf-8")
+        link = allowed / "link.md"
+        link.symlink_to(outside)
+        doc = _doc_with_content([_para("Hello\n", 1, 7)])
+
+        patchers = _mock_fetch_doc(doc)
+        with patchers[0], patchers[1], patchers[2], patchers[3]:
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "diff_tab_vs_file",
+                    {
+                        "doc_id": "doc-diff",
+                        "tab_id": "tab-1",
+                        "file_path": str(link),
+                    },
+                    raise_on_error=False,
+                )
+        assert result.is_error
+        assert "outside the allowed roots" in str(result.content)
+
+    @pytest.mark.asyncio
+    async def test_oversized_file_returns_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VERIFIED_GOOGLEDOCS_MCP_MAX_DIFF_FILE_BYTES", "3")
+        file = tmp_path / "large.md"
+        file.write_text("Hello\n", encoding="utf-8")
+        doc = _doc_with_content([_para("Hello\n", 1, 7)])
+
+        patchers = _mock_fetch_doc(doc)
+        with patchers[0], patchers[1], patchers[2], patchers[3]:
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "diff_tab_vs_file",
+                    {
+                        "doc_id": "doc-diff",
+                        "tab_id": "tab-1",
+                        "file_path": str(file),
+                    },
+                    raise_on_error=False,
+                )
+        assert result.is_error
+        assert "too large" in str(result.content)
 
     @pytest.mark.asyncio
     async def test_result_contains_metadata(self, tmp_path: Path) -> None:

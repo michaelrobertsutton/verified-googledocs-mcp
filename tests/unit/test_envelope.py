@@ -14,12 +14,13 @@ from verified_googledocs_mcp.verify import (
 
 
 class TestErrorCodeCoverage:
-    """All twelve enumerated codes must exist."""
+    """All enumerated codes must exist."""
 
     EXPECTED_CODES = {
         "ZERO_MATCH",
         "MATCH_COUNT_MISMATCH",
         "REVISION_CONFLICT",
+        "VERIFICATION_FAILED",
         "STALE_RANGE",
         "TAB_NOT_FOUND",
         "STRUCTURAL_BOUNDARY",
@@ -31,12 +32,12 @@ class TestErrorCodeCoverage:
         "AUTH_EXPIRED",
     }
 
-    def test_all_twelve_codes_exist(self):
+    def test_all_codes_exist(self):
         actual = {m.value for m in ErrorCode}
         assert actual == self.EXPECTED_CODES
 
     def test_enum_count(self):
-        assert len(ErrorCode) == 12
+        assert len(ErrorCode) == 13
 
 
 class TestRetryablePolicy:
