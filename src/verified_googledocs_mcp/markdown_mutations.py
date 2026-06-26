@@ -434,7 +434,6 @@ def execute_replace_range_markdown(
                 "outside_before": outside_before,
                 "outside_after": outside_after,
                 "blast_radius_violation": True,
-                "audit_logged": True,
             },
         )
 
@@ -965,7 +964,7 @@ def _resolve_allowed_diff_file(file_path: str) -> Path:
         ) from exc
 
     allowed_roots = _allowed_file_roots()
-    if not any(resolved == root or resolved.is_relative_to(root) for root in allowed_roots):
+    if not any(resolved.is_relative_to(root) for root in allowed_roots):
         raise _make_error(
             ErrorCode.INVALID_INPUT,
             "File path is outside the allowed roots for diff_tab_vs_file.",

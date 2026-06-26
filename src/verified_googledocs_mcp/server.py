@@ -274,7 +274,7 @@ def list_open_items(
         _raise_tool_error(
             _make_error(
                 ErrorCode.INVALID_INPUT,
-                "Pass tab_id for scoped suggestions, or include_all_tabs=true deliberately.",
+                "Pass tab_id to scope to one tab, or set include_all_tabs=true to include every tab.",
                 {"doc_id": doc_id, "tab_id": tab_id, "include_all_tabs": include_all_tabs},
             )
         )
