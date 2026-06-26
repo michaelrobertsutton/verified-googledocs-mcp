@@ -77,7 +77,7 @@ Fourteen tools replace the fourteen in active use. Names are working names.
 
 | Tool | Replaces | Notes |
 |---|---|---|
-| `list_open_items(doc_id, tab_id?)` | `listComments` + manual doc-JSON parsing | One call returns open comments **and** suggested edits, each with anchor text and quoted content |
+| `list_open_items(doc_id, tab_id?, include_all_tabs?)` | `listComments` + manual doc-JSON parsing | One call returns open comments **and** suggested edits; pass `tab_id` to scope suggestions to one tab, or `include_all_tabs=true` for every tab |
 | `get_comment_thread(comment_id)` | `getComment` | Full reply chain |
 | `add_anchored_comment(doc_id, tab_id, quote, body)` | `addComment` | If the quote is not found, errors with the nearest candidate anchors |
 | `reply_to_comment(comment_id, body)` | `replyToComment` | |

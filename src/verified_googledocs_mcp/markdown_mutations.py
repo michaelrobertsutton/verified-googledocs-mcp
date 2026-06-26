@@ -20,6 +20,8 @@ Live-API caveats (needs fixture session with real credentials):
 from __future__ import annotations
 
 import difflib
+import os
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -44,6 +46,24 @@ from .verify import (
 # ---------------------------------------------------------------------------
 
 
+def _iter_body_elements(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return structural elements, including paragraphs nested inside tables."""
+    elements: list[dict[str, Any]] = []
+
+    def walk(content: list[dict[str, Any]]) -> None:
+        for elem in content:
+            elements.append(elem)
+            table = elem.get("table")
+            if not table:
+                continue
+            for row in table.get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    walk(cell.get("content", []))
+
+    walk(body.get("content", []))
+    return elements
+
+
 def _count_structural_elements(body: dict[str, Any]) -> dict[str, int]:
     """Count tables, inline images, chips, and footnotes in a Docs body dict.
 
@@ -51,7 +71,7 @@ def _count_structural_elements(body: dict[str, Any]) -> dict[str, int]:
     Used for the guardrail inventory and blast-radius check.
     """
     counts: dict[str, int] = {"tables": 0, "images": 0, "chips": 0, "footnotes": 0}
-    for elem in body.get("content", []):
+    for elem in _iter_body_elements(body):
         if "table" in elem:
             counts["tables"] += 1
         if "paragraph" in elem:
@@ -76,7 +96,7 @@ def _count_structural_elements_in_range(
     Used by the guardrail to check what would be overwritten.
     """
     counts: dict[str, int] = {"tables": 0, "images": 0, "chips": 0, "footnotes": 0}
-    for elem in body.get("content", []):
+    for elem in _iter_body_elements(body):
         elem_start = elem.get("startIndex", 0)
         elem_end = elem.get("endIndex", 0)
         if elem_start >= end_index or elem_end <= start_index:
@@ -105,7 +125,7 @@ def _count_structural_elements_outside_range(
     Used for the blast-radius check.
     """
     counts: dict[str, int] = {"tables": 0, "images": 0, "chips": 0, "footnotes": 0}
-    for elem in body.get("content", []):
+    for elem in _iter_body_elements(body):
         elem_start = elem.get("startIndex", 0)
         elem_end = elem.get("endIndex", 0)
         if elem_end > start_index and elem_start < end_index:
@@ -126,6 +146,58 @@ def _count_structural_elements_outside_range(
 
 def _structural_total(counts: dict[str, int]) -> int:
     return sum(counts.values())
+
+
+def _raise_post_write_verification_failure(
+    *,
+    doc_id: str,
+    tab_id: str,
+    tool: str,
+    message: str,
+    evidence: dict[str, Any],
+) -> None:
+    """Audit post-write verification evidence, then raise a typed failure."""
+    evidence["applied"] = False
+    evidence["verification_failed"] = True
+    audit_ok, audit_reason = append_audit(
+        doc=doc_id,
+        tab=tab_id,
+        tool=tool,
+        evidence=evidence,
+    )
+    evidence["audit_logged"] = audit_ok
+    if not audit_ok:
+        evidence["audit_log_reason"] = audit_reason
+    raise _make_error(
+        ErrorCode.VERIFICATION_FAILED,
+        message,
+        {"evidence": evidence},
+    )
+
+
+def _fail_if_range_verification_failed(
+    *,
+    doc_id: str,
+    tab_id: str,
+    tool: str,
+    evidence: dict[str, Any],
+) -> None:
+    if evidence.get("structural_match") is False:
+        _raise_post_write_verification_failure(
+            doc_id=doc_id,
+            tab_id=tab_id,
+            tool=tool,
+            message="Post-write markdown verification failed.",
+            evidence=evidence,
+        )
+    if evidence.get("applied") is False and evidence.get("input_blocks", 0) > 0:
+        _raise_post_write_verification_failure(
+            doc_id=doc_id,
+            tab_id=tab_id,
+            tool=tool,
+            message="Post-write re-read did not confirm that the markdown write landed.",
+            evidence=evidence,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -350,10 +422,15 @@ def execute_replace_range_markdown(
     # --- Blast-radius check --------------------------------------------------
     outside_after = _count_structural_elements_outside_range(post_body, start_index, end_index)
     if outside_before != outside_after:
-        raise _make_error(
-            ErrorCode.INVALID_INPUT,
-            "Structural elements outside the edited range changed (blast-radius violation).",
-            {
+        _raise_post_write_verification_failure(
+            doc_id=doc_id,
+            tab_id=tab_id,
+            tool="replace_range_markdown",
+            message="Post-write blast-radius verification failed.",
+            evidence={
+                "applied": False,
+                "revision_before": revision_before,
+                "revision_after": revision_after,
                 "outside_before": outside_before,
                 "outside_after": outside_after,
                 "blast_radius_violation": True,
@@ -377,6 +454,12 @@ def execute_replace_range_markdown(
         audit_logged=True,
     )
     evidence = _flag_unconfirmed_write(evidence, post_body)
+    _fail_if_range_verification_failed(
+        doc_id=doc_id,
+        tab_id=tab_id,
+        tool="replace_range_markdown",
+        evidence=evidence,
+    )
 
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
@@ -528,6 +611,12 @@ def execute_replace_tab_markdown(
         audit_logged=True,
     )
     evidence = _flag_unconfirmed_write(evidence, post_body)
+    _fail_if_range_verification_failed(
+        doc_id=doc_id,
+        tab_id=tab_id,
+        tool="replace_tab_markdown",
+        evidence=evidence,
+    )
 
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
@@ -656,6 +745,12 @@ def execute_append_markdown(
         audit_logged=True,
     )
     evidence = _flag_unconfirmed_write(evidence, post_body)
+    _fail_if_range_verification_failed(
+        doc_id=doc_id,
+        tab_id=tab_id,
+        tool="append_markdown",
+        evidence=evidence,
+    )
 
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
@@ -799,6 +894,14 @@ def execute_insert_image(
         applied=True,
         audit_logged=True,
     )
+    if not evidence.get("inline_object_confirmed", False):
+        _raise_post_write_verification_failure(
+            doc_id=doc_id,
+            tab_id=tab_id,
+            tool="insert_image",
+            message="Post-write image verification failed.",
+            evidence=evidence,
+        )
 
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
@@ -817,6 +920,79 @@ def execute_insert_image(
 # diff_tab_vs_file (read-only, no mutation)
 # ---------------------------------------------------------------------------
 
+_ALLOWED_FILE_ROOTS_ENV = "VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS"
+_MAX_DIFF_FILE_BYTES_ENV = "VERIFIED_GOOGLEDOCS_MCP_MAX_DIFF_FILE_BYTES"
+_DEFAULT_MAX_DIFF_FILE_BYTES = 1_000_000
+
+
+def _allowed_file_roots() -> list[Path]:
+    raw = os.environ.get(_ALLOWED_FILE_ROOTS_ENV)
+    root_values = [p for p in raw.split(os.pathsep) if p] if raw is not None else [os.getcwd()]
+    return [Path(value).expanduser().resolve(strict=False) for value in root_values]
+
+
+def _max_diff_file_bytes() -> int:
+    raw = os.environ.get(_MAX_DIFF_FILE_BYTES_ENV)
+    if raw is None:
+        return _DEFAULT_MAX_DIFF_FILE_BYTES
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise _make_error(
+            ErrorCode.INVALID_INPUT,
+            f"{_MAX_DIFF_FILE_BYTES_ENV} must be an integer byte count.",
+            {"env_var": _MAX_DIFF_FILE_BYTES_ENV, "value": raw},
+        ) from exc
+    if value < 1:
+        raise _make_error(
+            ErrorCode.INVALID_INPUT,
+            f"{_MAX_DIFF_FILE_BYTES_ENV} must be greater than zero.",
+            {"env_var": _MAX_DIFF_FILE_BYTES_ENV, "value": raw},
+        )
+    return value
+
+
+def _resolve_allowed_diff_file(file_path: str) -> Path:
+    requested = Path(file_path).expanduser()
+    try:
+        resolved = requested.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise _make_error(
+            ErrorCode.INVALID_INPUT,
+            f"File not found: {file_path!r}",
+            {"file_path": file_path},
+        ) from exc
+
+    allowed_roots = _allowed_file_roots()
+    if not any(resolved.is_relative_to(root) for root in allowed_roots):
+        raise _make_error(
+            ErrorCode.INVALID_INPUT,
+            "File path is outside the allowed roots for diff_tab_vs_file.",
+            {
+                "file_path": file_path,
+                "resolved_path": str(resolved),
+                "allowed_roots": [str(root) for root in allowed_roots],
+            },
+        )
+
+    if not resolved.is_file():
+        raise _make_error(
+            ErrorCode.INVALID_INPUT,
+            f"Path is not a regular file: {file_path!r}",
+            {"file_path": file_path, "resolved_path": str(resolved)},
+        )
+
+    max_bytes = _max_diff_file_bytes()
+    size = resolved.stat().st_size
+    if size > max_bytes:
+        raise _make_error(
+            ErrorCode.INVALID_INPUT,
+            "File is too large for diff_tab_vs_file.",
+            {"file_path": file_path, "size_bytes": size, "max_bytes": max_bytes},
+        )
+
+    return resolved
+
 
 def execute_diff_tab_vs_file(
     *,
@@ -832,8 +1008,6 @@ def execute_diff_tab_vs_file(
 
     This is a READ tool — no mutation, no audit, no evidence envelope required.
     """
-    from pathlib import Path
-
     # --- Fetch document and export tab as markdown ---------------------------
     doc = fetch_document(service, doc_id)
     body = _find_tab_body(doc, tab_id)
@@ -849,14 +1023,7 @@ def execute_diff_tab_vs_file(
     revision_id = doc.get("revisionId", "")
 
     # --- Read the local file -------------------------------------------------
-    file = Path(file_path)
-    if not file.exists():
-        raise _make_error(
-            ErrorCode.INVALID_INPUT,
-            f"File not found: {file_path!r}",
-            {"file_path": file_path},
-        )
-
+    file = _resolve_allowed_diff_file(file_path)
     file_content = file.read_text(encoding="utf-8")
 
     # --- Structured diff -----------------------------------------------------

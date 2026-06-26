@@ -22,7 +22,7 @@ broad, whole-document operations; map them as follows.
 | `appendMarkdown` | `append_markdown` | Tab-scoped |
 | `insertImage` | `insert_image` | Public `http(s)` URL only (local paths rejected); confirms the inline object landed |
 | `findSectionsByHeading` / heading search | `find_sections` | Returns ranges stamped with the document revision |
-| `listComments` (comments only) | `list_open_items` | Returns open comments **and** pending suggested edits in one call |
+| `listComments` (comments only) | `list_open_items` | Returns open comments **and** pending suggested edits; pass `tab_id` or `include_all_tabs=true` |
 | `getComment` / comment thread | `get_comment_thread` | Full reply chain, quoted text, resolved state |
 | `addComment` | `add_anchored_comment` | Anchored against a quote that must exist in the tab |
 | `replyToComment` | `reply_to_comment` | Re-queries and returns post-state |

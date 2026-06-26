@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** `list_open_items` now requires either `tab_id` or
+  `include_all_tabs=true`; omitting both returns `INVALID_INPUT`. This contract
+  change makes the next release `0.2.0` rather than a patch release.
+- Tool errors are now surfaced as JSON error envelopes instead of Python
+  dictionary representations, so clients can parse `error_code`,
+  `diagnostics`, and `retryable` reliably.
+
+### Added
+- Added `VERIFICATION_FAILED` for post-write verification failures.
+
 ## [0.1.0] - 2026-06-14
 
 First public release.

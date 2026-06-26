@@ -12,8 +12,9 @@ Entry point dispatch
 
 from __future__ import annotations
 
+import json
 import sys
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 
 from fastmcp import FastMCP
 
@@ -43,7 +44,7 @@ from .markdown_mutations import (
     execute_replace_range_markdown,
     execute_replace_tab_markdown,
 )
-from .verify import VerifyError
+from .verify import ErrorCode, VerifyError, _make_error
 
 mcp = FastMCP(
     "verified-googledocs-mcp",
@@ -110,7 +111,16 @@ def read_document(
     """
     service = _get_service()
     doc = fetch_document(service, doc_id)
-    result = read_tab(doc, doc_id, tab_id, format=format)
+    try:
+        result = read_tab(doc, doc_id, tab_id, format=format)
+    except ValueError as exc:
+        _raise_tool_error(
+            _make_error(
+                ErrorCode.TAB_NOT_FOUND,
+                str(exc),
+                {"doc_id": doc_id, "tab_id": tab_id},
+            )
+        )
 
     response: dict[str, Any] = {
         "doc_id": result.doc_id,
@@ -149,7 +159,16 @@ def find_sections(
     """
     service = _get_service()
     doc = fetch_document(service, doc_id)
-    matches = find_sections_in(doc, heading, tab_id)
+    try:
+        matches = find_sections_in(doc, heading, tab_id)
+    except ValueError as exc:
+        _raise_tool_error(
+            _make_error(
+                ErrorCode.TAB_NOT_FOUND,
+                str(exc),
+                {"doc_id": doc_id, "tab_id": tab_id},
+            )
+        )
     return {
         "doc_id": doc_id,
         "tab_id": tab_id,
@@ -222,11 +241,7 @@ def replace_text(
             dry_run=dry_run,
         )
     except VerifyError as exc:
-        # Surface the typed envelope as the MCP tool error payload so the
-        # caller receives structured diagnostics rather than a bare string.
-        from fastmcp.exceptions import ToolError
-
-        raise ToolError(str(exc.envelope.to_dict())) from exc
+        _raise_tool_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +250,9 @@ def replace_text(
 
 
 @mcp.tool()
-def list_open_items(doc_id: str, tab_id: str = "") -> dict[str, Any]:
+def list_open_items(
+    doc_id: str, tab_id: str = "", include_all_tabs: bool = False
+) -> dict[str, Any]:
     """List all open comments and pending suggested edits on a document.
 
     Use this tool when you need a single unified view of all open review
@@ -243,15 +260,33 @@ def list_open_items(doc_id: str, tab_id: str = "") -> dict[str, Any]:
     scope='document') and per-tab suggested edits in one response.
 
     Comments come from the Drive API and cannot be attributed to a specific
-    tab — Drive comment anchors are opaque.  If tab_id is provided it filters
-    the suggestions returned to that tab only; if omitted all tabs are included.
-    Comments are always returned document-wide regardless of tab_id.
+    tab — Drive comment anchors are opaque. If tab_id is provided it filters
+    the suggestions returned to that tab only. To include suggestions from
+    every tab, set include_all_tabs=true. Comments are always returned
+    document-wide regardless of tab_id.
 
     Suggestions are extracted from the raw Docs JSON (suggestedInsertionIds /
     suggestedDeletionIds / suggestedTextStyleChanges) and are per-tab.  The
     document is fetched with suggestionsViewMode=SUGGESTIONS_INLINE so that
     suggestion fields are populated.
     """
+    if not tab_id and not include_all_tabs:
+        _raise_tool_error(
+            _make_error(
+                ErrorCode.INVALID_INPUT,
+                "Pass tab_id to scope to one tab, or set include_all_tabs=true to include every tab.",
+                {"doc_id": doc_id, "tab_id": tab_id, "include_all_tabs": include_all_tabs},
+            )
+        )
+    if tab_id and include_all_tabs:
+        _raise_tool_error(
+            _make_error(
+                ErrorCode.INVALID_INPUT,
+                "Pass either tab_id or include_all_tabs=true, not both.",
+                {"doc_id": doc_id, "tab_id": tab_id, "include_all_tabs": include_all_tabs},
+            )
+        )
+
     credentials = _get_credentials()
     docs_service = build_docs_service(credentials)
     drive_service = build_drive_service(credentials)
@@ -267,7 +302,16 @@ def list_open_items(doc_id: str, tab_id: str = "") -> dict[str, Any]:
     )
 
     if tab_id:
-        suggestions = extract_suggestions(doc, tab_id)
+        try:
+            suggestions = extract_suggestions(doc, tab_id)
+        except ValueError as exc:
+            _raise_tool_error(
+                _make_error(
+                    ErrorCode.TAB_NOT_FOUND,
+                    str(exc),
+                    {"doc_id": doc_id, "tab_id": tab_id},
+                )
+            )
     else:
         all_suggestions: list[dict[str, Any]] = []
         for tid in _available_tab_ids(doc):
@@ -345,9 +389,7 @@ def add_anchored_comment(doc_id: str, tab_id: str, quote: str, body: str) -> dic
             body=body,
         )
     except VerifyError as exc:
-        from fastmcp.exceptions import ToolError
-
-        raise ToolError(str(exc.envelope.to_dict())) from exc
+        _raise_tool_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -379,9 +421,7 @@ def reply_to_comment(doc_id: str, comment_id: str, body: str) -> dict[str, Any]:
             body=body,
         )
     except VerifyError as exc:
-        from fastmcp.exceptions import ToolError
-
-        raise ToolError(str(exc.envelope.to_dict())) from exc
+        _raise_tool_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -419,9 +459,7 @@ def resolve_comment(doc_id: str, comment_id: str) -> dict[str, Any]:
             comment_id=comment_id,
         )
     except VerifyError as exc:
-        from fastmcp.exceptions import ToolError
-
-        raise ToolError(str(exc.envelope.to_dict())) from exc
+        _raise_tool_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -476,9 +514,7 @@ def replace_range_markdown(
             dry_run=dry_run,
         )
     except VerifyError as exc:
-        from fastmcp.exceptions import ToolError
-
-        raise ToolError(str(exc.envelope.to_dict())) from exc
+        _raise_tool_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -521,9 +557,7 @@ def replace_tab_markdown(
             dry_run=dry_run,
         )
     except VerifyError as exc:
-        from fastmcp.exceptions import ToolError
-
-        raise ToolError(str(exc.envelope.to_dict())) from exc
+        _raise_tool_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -560,9 +594,7 @@ def append_markdown(
             dry_run=dry_run,
         )
     except VerifyError as exc:
-        from fastmcp.exceptions import ToolError
-
-        raise ToolError(str(exc.envelope.to_dict())) from exc
+        _raise_tool_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -613,9 +645,7 @@ def insert_image(
             dry_run=dry_run,
         )
     except VerifyError as exc:
-        from fastmcp.exceptions import ToolError
-
-        raise ToolError(str(exc.envelope.to_dict())) from exc
+        _raise_tool_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -656,9 +686,7 @@ def diff_tab_vs_file(
             file_path=file_path,
         )
     except VerifyError as exc:
-        from fastmcp.exceptions import ToolError
-
-        raise ToolError(str(exc.envelope.to_dict())) from exc
+        _raise_tool_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -675,18 +703,23 @@ def _get_credentials() -> Any:
     read tools that have no per-tool try/except, returns the AUTH_EXPIRED
     envelope rather than a masked internal error.
     """
-    from fastmcp.exceptions import ToolError
-
     try:
         return get_credentials()
     except VerifyError as exc:
-        raise ToolError(str(exc.envelope.to_dict())) from exc
+        _raise_tool_error(exc)
 
 
 def _get_service() -> Any:
     """Return a Docs API service, failing fast if credentials are missing."""
     credentials = _get_credentials()
     return build_docs_service(credentials)
+
+
+def _raise_tool_error(exc: VerifyError) -> NoReturn:
+    """Raise a FastMCP ToolError carrying a JSON error envelope."""
+    from fastmcp.exceptions import ToolError
+
+    raise ToolError(json.dumps(exc.envelope.to_dict(), ensure_ascii=False)) from exc
 
 
 # ---------------------------------------------------------------------------

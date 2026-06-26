@@ -259,7 +259,7 @@ class TestAuthExpiredSurfacing:
             ("list_tabs", {"doc_id": "d"}),
             ("read_document", {"doc_id": "d", "tab_id": "t"}),
             ("find_sections", {"doc_id": "d", "heading": "h", "tab_id": "t"}),
-            ("list_open_items", {"doc_id": "d"}),
+            ("list_open_items", {"doc_id": "d", "include_all_tabs": True}),
             ("replace_text", {"doc_id": "d", "tab_id": "t", "find": "x", "replace": "y"}),
         ],
     )

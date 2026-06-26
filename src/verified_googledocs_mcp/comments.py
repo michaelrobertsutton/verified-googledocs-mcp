@@ -284,7 +284,8 @@ def execute_add_anchored_comment(
         raise
 
     # --- Create comment ----------------------------------------------------
-    comment_raw = create_comment(drive_service, doc_id, quote, body)
+    created = create_comment(drive_service, doc_id, quote, body)
+    comment_raw = re_query_comment(drive_service, doc_id, created.get("comment_id", ""))
 
     # --- Assemble evidence -------------------------------------------------
     evidence = assemble_comment_state_evidence(

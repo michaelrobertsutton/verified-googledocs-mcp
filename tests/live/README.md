@@ -1,10 +1,10 @@
 # Live acceptance suite
 
-The pre-release gate (issue #23). Exercises all 14 tools, all 12 error codes,
-and both PRD acceptance workflows against the **real** Google Docs and Drive
-APIs — not against recorded fixtures. The offline unit suite proves the logic;
-this suite proves the verified-write contract survives contact with real
-revision IDs, real index arithmetic, and real Drive comment semantics.
+The pre-release gate (issue #23). Exercises the tool surface, error codes, and
+both PRD acceptance workflows against the **real** Google Docs and Drive APIs —
+not against recorded fixtures. The offline unit suite proves the logic; this
+suite proves the verified-write contract survives contact with real revision
+IDs, real index arithmetic, and real Drive comment semantics.
 
 ## Running it
 
@@ -35,6 +35,9 @@ Override the fixture document with `VERIFIED_GOOGLEDOCS_MCP_TEST_DOC=<doc_id>`.
 - **The audit log is isolated.** An autouse fixture points `XDG_STATE_HOME` at a
   per-test tmp dir, so the suite never writes to the real audit log and "one
   line per mutation" can be asserted cleanly.
+- **Local file reads are isolated.** The same fixture points
+  `VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS` at the per-test tmp dir, so sync
+  tests can diff temporary markdown files without exposing broader local paths.
 - **Two error codes can't occur naturally**, so they use controlled
   simulations where the real API still produces the rejection/re-query:
   `REVISION_CONFLICT` (stale `requiredRevisionId`) and `COMMENT_STILL_OPEN`
@@ -56,6 +59,8 @@ Override the fixture document with `VERIFIED_GOOGLEDOCS_MCP_TEST_DOC=<doc_id>`.
 
 ## Status
 
-**Gate met:** `pytest --run-live` → 57 passed, 0 xfailed, 0 skipped. Every
-divergence this pass found (#28, #29, #30, #31, #36, #37, #38, #43) has been
-fixed. See `docs/acceptance-report.md` for the full matrix.
+**Initial-release gate met:** `pytest --run-live` → 57 passed, 0 xfailed,
+0 skipped. Every divergence this pass found (#28, #29, #30, #31, #36, #37,
+#38, #43) has been fixed. See `docs/acceptance-report.md` for the baseline
+matrix; rerun this suite before release when the tool surface or error-code
+matrix changes.
