@@ -228,6 +228,8 @@ def doc_with_table_cell_image(revision: str = "rev-1") -> dict[str, Any]:
             }
         ],
     }
+
+
 def doc_with_image(revision: str = "rev-1") -> dict[str, Any]:
     """Doc with a heading and an inline image paragraph."""
     body = {

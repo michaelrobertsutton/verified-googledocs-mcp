@@ -250,7 +250,9 @@ def replace_text(
 
 
 @mcp.tool()
-def list_open_items(doc_id: str, tab_id: str = "", include_all_tabs: bool = False) -> dict[str, Any]:
+def list_open_items(
+    doc_id: str, tab_id: str = "", include_all_tabs: bool = False
+) -> dict[str, Any]:
     """List all open comments and pending suggested edits on a document.
 
     Use this tool when you need a single unified view of all open review

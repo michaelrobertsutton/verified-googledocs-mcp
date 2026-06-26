@@ -186,7 +186,9 @@ def _flatten_tab(tab_json: dict[str, Any]) -> tuple[str, list[int], list[int]]:
 
             elif "tableCell" in structural_element:
                 # Defensive support for callers that pass a table cell as a body.
-                para_idx = walk_content(structural_element["tableCell"].get("content", []), para_idx)
+                para_idx = walk_content(
+                    structural_element["tableCell"].get("content", []), para_idx
+                )
 
         return para_idx
 

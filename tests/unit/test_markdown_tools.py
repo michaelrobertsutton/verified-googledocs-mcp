@@ -322,7 +322,9 @@ class TestReplaceRangeMarkdown:
         assert "TAB_NOT_FOUND" in str(result.content)
 
     @pytest.mark.asyncio
-    async def test_unconfirmed_image_returns_verification_failed(self, tmp_path, monkeypatch) -> None:
+    async def test_unconfirmed_image_returns_verification_failed(
+        self, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
         pre = simple_markdown_doc("Hello world", revision="rev-1")
         post = simple_markdown_doc("Hello world", revision="rev-2")
