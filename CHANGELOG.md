@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Markdown tables no longer 400 on write via `replace_tab_markdown` or
+  `replace_range_markdown`. The compiler's cell-index formula was off by two
+  (pinned against the live API by a new contract test), and content
+  following a table now lands at the correct index instead of a stale one.
+- `dry_run` is now authoritative for markdown writes: a new offline index
+  simulator replays the exact assembled request list and is shared by both
+  `dry_run` and the real write, so the two can no longer disagree. Failures
+  raise the new `INDEX_SIMULATION_FAILED` error instead of a raw API 400.
+- Table structural verification now compares cell contents, not just
+  row/column counts, so a write that lands the right shape with wrong or
+  missing cell text is correctly reported as a mismatch.
+- `diff_tab_vs_file`'s allowed-file-root default changed from the server
+  process's working directory to the user's home directory, so cross-repo
+  diffs work without per-machine configuration — the common case is a
+  server registered with `--directory` pinned to one repo while the diff
+  target lives in another. A new unconditional denylist (`.ssh`, `.aws`,
+  `.gnupg`, `.netrc`, `.git-credentials`, `.config/gh`,
+  `.docker/config.json`, `.npmrc`) closes the resulting exposure to a
+  document's own content tricking an agent into reading credentials.
+  Rejected paths now name the exact environment variable to set.
+
 ### Changed
 - **Breaking:** `list_open_items` now requires either `tab_id` or
   `include_all_tabs=true`; omitting both returns `INVALID_INPUT`. This contract
@@ -13,9 +35,14 @@ All notable changes to this project are documented here. The format follows
 - Tool errors are now surfaced as JSON error envelopes instead of Python
   dictionary representations, so clients can parse `error_code`,
   `diagnostics`, and `retryable` reliably.
+- `read_document` gains `format="outline"`: headings only (level, text,
+  position), for callers that only need geometry and don't want to pull a
+  whole tab as markdown.
 
 ### Added
 - Added `VERIFICATION_FAILED` for post-write verification failures.
+- Added `INDEX_SIMULATION_FAILED` for markdown writes whose compiled
+  requests would land at an invalid index.
 
 ## [0.1.0] - 2026-06-14
 

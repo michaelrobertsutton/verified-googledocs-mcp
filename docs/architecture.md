@@ -61,6 +61,10 @@ The evidence shape depends on the kind of mutation, but all run through the same
 - **Structural** (`insert_image`): post-read confirms an inline object now exists at the resolved anchor.
 - **Comment-state** (`resolve_comment`, `reply_to_comment`, `add_anchored_comment`): post-write re-query returns the comment's actual final state; a comment still open after a resolve is an error.
 
+## Evidence is the confirmation — don't re-read after a write
+
+Every mutating tool's return payload is itself the proof the write landed: `applied`, `revision_before`/`revision_after`, and for range/markdown writes `structural_match` plus `input_blocks`/`post_blocks` (table equality now includes cell contents, not just row/column counts — see `_blocks_structurally_equal` in `verify.py`). A caller that does a full `read_document` after every write to double-check is paying for a redundant round-trip; the evidence payload already re-read the document and diffed it against the input as part of producing that response. Only re-read when you need the *content* for a subsequent step, not to confirm the write succeeded.
+
 ## Enforcement middleware
 
 A FastMCP middleware checks that any tool registered as mutating returns an evidence payload. A mutating tool that returns without evidence is rejected at the boundary, so the "no unverified success" guarantee survives a future tool that forgets to follow the pattern.

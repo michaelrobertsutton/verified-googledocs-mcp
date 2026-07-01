@@ -226,6 +226,130 @@ def test_table_insert_location_is_at_start_index():
     assert table_reqs[0]["location"]["index"] == 5
 
 
+def _cell_text_inserts(reqs: list, insert_at: int) -> list[tuple[int, str]]:
+    """insertText requests at or after insert_at, in the order they were emitted."""
+    return [
+        (r["insertText"]["location"]["index"], r["insertText"]["text"])
+        for r in reqs
+        if "insertText" in r and r["insertText"]["location"]["index"] >= insert_at
+    ]
+
+
+def test_table_cell_indices_match_pinned_geometry():
+    """Regression test for the off-by-two bug: cell(r, c) paragraph index must be
+    table_start + 3 + r*stride + c*2, where table_start = insert_at + 1 — pinned by
+    the live contract test tests/live/test_markdown_writes.py::TestTableGeometryProbe.
+    """
+    insert_at = 1
+    src = "| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |\n"
+    reqs = compile_markdown(src, start_index=insert_at)
+    table_start = insert_at + 1
+    n_cols = 3
+    stride = n_cols * 2 + 1
+
+    inserts_by_index = {
+        r["insertText"]["location"]["index"]: r["insertText"]["text"]
+        for r in reqs
+        if "insertText" in r
+    }
+    expected = {
+        (0, 0): "A",
+        (0, 1): "B",
+        (0, 2): "C",
+        (1, 0): "1",
+        (1, 1): "2",
+        (1, 2): "3",
+    }
+    for (r_idx, c_idx), text in expected.items():
+        cell_index = table_start + 3 + r_idx * stride + c_idx * 2
+        assert inserts_by_index.get(cell_index) == text, (
+            f"cell ({r_idx},{c_idx}) expected {text!r} at index {cell_index}, "
+            f"got {inserts_by_index.get(cell_index)!r}"
+        )
+
+
+def test_content_after_table_accounts_for_cell_text_length():
+    """The post-table cursor must include every inserted cell's UTF-16 length,
+    not just the empty table's structural size — otherwise content after a
+    table lands at a stale (pre-population) index."""
+    insert_at = 1
+    src = "| Header cell text |\n|---|\n| Body cell text |\n\nAfter the table.\n"
+    reqs = compile_markdown(src, start_index=insert_at)
+
+    n_rows, n_cols = 2, 1
+    stride = n_cols * 2 + 1
+    table_structural_size = 1 + 1 + n_rows * stride + 1
+    total_cell_text_length = len("Header cell text") + len("Body cell text")
+    expected_index = insert_at + table_structural_size + total_cell_text_length
+
+    inserts_by_index = {
+        r["insertText"]["location"]["index"]: r["insertText"]["text"]
+        for r in reqs
+        if "insertText" in r
+    }
+    assert inserts_by_index.get(expected_index, "").startswith("After the table")
+
+
+def test_table_cell_bold_style_span_shifted_for_reverse_insertion():
+    """Cells are inserted highest-index first; a lower-index cell's insertion
+    shifts an already-inserted higher-index cell's text forward. Style spans
+    (applied after every insert) must be shifted to match."""
+    insert_at = 1
+    src = "| **Left** | **Right** |\n|---|---|\n"
+    reqs = compile_markdown(src, start_index=insert_at)
+
+    table_start = insert_at + 1
+    n_cols = 2
+    stride = n_cols * 2 + 1
+    left_index = table_start + 3 + 0 * stride + 0 * 2
+    right_index = table_start + 3 + 0 * stride + 1 * 2
+
+    # Sanity: both cells' own insertText land at the pinned (unshifted) indices —
+    # the reverse-order insertion technique itself is untouched by this fix.
+    inserts_by_index = {
+        r["insertText"]["location"]["index"]: r["insertText"]["text"]
+        for r in reqs
+        if "insertText" in r
+    }
+    assert inserts_by_index.get(left_index) == "Left"
+    assert inserts_by_index.get(right_index) == "Right"
+
+    # "Right" is the higher-index cell; "Left" is inserted after it in the
+    # batch, shifting "Right"'s already-placed text forward by len("Left").
+    bold_styles = _find_requests(reqs, "updateTextStyle")
+    right_style = next(s for s in bold_styles if s["range"]["startIndex"] == right_index + len("Left"))
+    assert right_style["range"]["endIndex"] == right_index + len("Left") + len("Right")
+
+    # "Left" is the lowest-index cell, inserted last — nothing shifts it.
+    left_style = next(s for s in bold_styles if s["range"]["startIndex"] == left_index)
+    assert left_style["range"]["endIndex"] == left_index + len("Left")
+
+
+def test_table_first_element_after_heading():
+    """Table as the first body element right after a heading — the original
+    reported repro shape."""
+    src = "# Title\n\n| A | B |\n|---|---|\n| one sentence here. | another sentence. |\n"
+    reqs = compile_markdown(src, start_index=1)
+    combined = "".join(_insert_texts(reqs))
+    assert "Title" in combined
+    assert "one sentence here." in combined
+    assert "another sentence." in combined
+
+
+def test_multi_row_table_all_cells_present():
+    src = (
+        "| A | B |\n"
+        "|---|---|\n"
+        "| r0c0 | r0c1 |\n"
+        "| r1c0 | r1c1 |\n"
+        "| r2c0 | r2c1 |\n"
+    )
+    reqs = compile_markdown(src, start_index=1)
+    combined = "".join(_insert_texts(reqs))
+    for expected in ("r0c0", "r0c1", "r1c0", "r1c1", "r2c0", "r2c1"):
+        assert expected in combined
+
+
 # ---------------------------------------------------------------------------
 # UTF-16 index correctness with astral emoji
 # ---------------------------------------------------------------------------

@@ -136,6 +136,41 @@ def _utf16_len(text: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Table geometry (shared with index_sim.py — single source of truth)
+# ---------------------------------------------------------------------------
+#
+# Pinned by the live contract test
+# tests/live/test_markdown_writes.py::TestTableGeometryProbe, which inserts
+# raw empty insertTable requests and reads back the real per-cell indices.
+# index_sim.py imports these instead of re-deriving the formula, so the
+# simulator and the compiler can never silently drift apart.
+
+
+def _table_stride(n_cols: int) -> int:
+    """Index distance between the start of one table row and the next."""
+    return n_cols * 2 + 1
+
+
+def _table_structural_size(n_rows: int, n_cols: int) -> int:
+    """Total index span of a freshly-created *empty* table, from its
+    ``insertTable`` location index to just past its table-end marker.
+
+      1  for the leading newline / paragraph the API inserts
+      1  for the table-start marker
+      n_rows * stride for the row/cell structure
+      1  for the table-end marker
+    """
+    return 1 + 1 + n_rows * _table_stride(n_cols) + 1
+
+
+def _table_cell_index(table_start: int, n_cols: int, r_idx: int, c_idx: int) -> int:
+    """The paragraph start index of cell (r_idx, c_idx) in a freshly-created
+    table whose structural start (T = insertTable location index + 1) is
+    *table_start*."""
+    return table_start + 3 + r_idx * _table_stride(n_cols) + c_idx * 2
+
+
+# ---------------------------------------------------------------------------
 # Internal compiler
 # ---------------------------------------------------------------------------
 
@@ -423,26 +458,32 @@ class _Compiler:
         - We then populate cell text in **reverse** (highest index first) so
           that earlier insertions do not shift later indices.
 
-        Docs API table index layout (empirically verified pattern):
-          table_start (= insert_index + 1)
-            row 0
-              cell (0,0): paragraph at table_start + 2
-              cell (0,1): paragraph at cell(0,0) + 2
-              ...
-            row 1: ...
+        Docs API table index layout — pinned by the live contract test
+        ``tests/live/test_markdown_writes.py::TestTableGeometryProbe``, which
+        inserts raw empty tables and reads back the real per-cell indices:
+          table_start (T) = insert_index + 1        (leading \\n)
+          stride          = cols * 2 + 1
+          row_start(r)    = T + 1 + r * stride
+          cell(r, c) paragraph index = T + 3 + r * stride + c * 2
+          table_end (empty table)    = T + rows * stride + 2
 
-        Each cell slot in the freshly-created table has a width of 2:
-          - 1 index for the empty paragraph inside the cell
-          - 1 index for the cell end marker
-        Each row has an additional 1 index for the row end marker.
-        The table itself has 1 index for the table start marker.
+        Because every cell-text ``insertText`` lands in the *same*
+        batchUpdate as ``insertTable`` and Docs applies requests
+        sequentially, two further adjustments are needed beyond the
+        per-cell index itself:
 
-        So:
-          table_start = insert_index + 1  (API inserts a leading \n)
-          cell(r, c) paragraph index = table_start + 1
-                                       + r * (cols * 2 + 1)
-                                       + c * 2
-
+        1. Post-table cursor: content that follows the table in this batch
+           executes *after* every cell insertion, so its index must include
+           the total UTF-16 length of all inserted cell text — not just the
+           empty table's structural size.
+        2. Intra-cell style spans: cells are populated highest-index first so
+           that inserting into one cell never shifts a not-yet-inserted
+           cell. But by the same token, once a lower-index cell's text is
+           inserted, it shifts every already-inserted higher-index cell's
+           text forward. Style spans (bold/italic/link) are applied via
+           ``updateTextStyle`` *after* every insert in the batch, so each
+           cell's spans must be shifted forward by the cumulative length of
+           every lower-index cell's text.
         """
         # Collect all rows in document order.
         rows: list[list[SyntaxTreeNode]] = []
@@ -476,28 +517,17 @@ class _Compiler:
             }
         )
 
-        # Advance cursor past the table structure:
-        #   1  for the leading newline / paragraph the API inserts
-        #   1  for the table-start marker
-        #   n_rows * (n_cols * 2 + 1) for the row/cell structure
-        #   1  for the table-end marker
-        # But we manage cell insertions ourselves (reverse order), so for
-        # cursor tracking purposes after the table we need the full advance.
-        table_structural_size = 1 + 1 + n_rows * (n_cols * 2 + 1) + 1
-        table_start = insert_at + 1  # the leading \n bumps actual table start by 1
+        table_start = insert_at + 1  # T: the leading \n bumps actual table start by 1
+        table_structural_size = _table_structural_size(n_rows, n_cols)
 
-        # Cell text insertions — reverse order (highest index first).
-        # We build a list of (index, text) pairs then reverse them.
+        # Cell text insertions, collected in ascending (row-major) index
+        # order first, then inserted in reverse (highest index first) so
+        # that inserting into one cell never shifts a not-yet-inserted cell.
         cell_insertions: list[tuple[int, str, list[_StyleSpan]]] = []
 
         for r_idx, row in enumerate(rows_normalised):
             for c_idx, cell_node in enumerate(row):
-                cell_para_index = (
-                    table_start
-                    + 1  # table-start marker
-                    + r_idx * (n_cols * 2 + 1)
-                    + c_idx * 2
-                )
+                cell_para_index = _table_cell_index(table_start, n_cols, r_idx, c_idx)
                 if cell_node is None:
                     continue
                 # Collect inline text for this cell.
@@ -505,8 +535,30 @@ class _Compiler:
                 if cell_text:
                     cell_insertions.append((cell_para_index, cell_text, cell_spans))
 
+        # Cumulative UTF-16 length of every cell already inserted, in
+        # ascending index order. A cell's already-placed text is shifted
+        # forward by this amount once every lower-index cell (which is
+        # inserted *after* it, since we insert highest-index first) has
+        # landed. Style spans must be adjusted by this shift before being
+        # queued, because updateTextStyle requests run after every insert.
+        cumulative_shift = 0
+        shifted_style_spans: list[_StyleSpan] = []
+        for _cell_idx, cell_text, cell_spans in cell_insertions:
+            for span in cell_spans:
+                shifted_style_spans.append(
+                    _StyleSpan(
+                        start=span.start + cumulative_shift,
+                        end=span.end + cumulative_shift,
+                        bold=span.bold,
+                        italic=span.italic,
+                        link_url=span.link_url,
+                    )
+                )
+            cumulative_shift += _utf16_len(cell_text)
+        total_cell_text_length = cumulative_shift
+
         # Reverse so we insert from the highest index downward.
-        for cell_idx, cell_text, cell_spans in reversed(cell_insertions):
+        for cell_idx, cell_text, _cell_spans in reversed(cell_insertions):
             self._inserts.append(
                 {
                     "insertText": {
@@ -515,12 +567,11 @@ class _Compiler:
                     }
                 }
             )
-            # The style spans were computed relative to cell_idx being the
-            # start of the text; they are absolute indices already.
-            self._style_spans.extend(cell_spans)
+        self._style_spans.extend(shifted_style_spans)
 
-        # Advance the main cursor past the whole table.
-        self._cursor = insert_at + table_structural_size
+        # Advance the main cursor past the whole table *and* every cell's
+        # inserted text (see docstring point 1).
+        self._cursor = insert_at + table_structural_size + total_cell_text_length
 
     def _compile_cell(
         self, cell_node: SyntaxTreeNode, base_index: int

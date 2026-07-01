@@ -97,7 +97,7 @@ Fourteen focused tools, each described by *when* to reach for it, replace the sl
 ### Reading and structure
 | Tool | What it does |
 |------|--------------|
-| `read_document` | Read a tab as markdown or as structured positions and style runs |
+| `read_document` | Read a tab as markdown, as structured positions and style runs, or as a headings-only outline |
 | `list_tabs` | List tab IDs, titles, and nesting |
 | `find_sections` | Find headings and return their ranges, stamped with the document revision |
 
@@ -244,7 +244,7 @@ This is a single-user, local server. It runs as you, over stdio, launched by you
 - **Scopes.** It requests `documents` and `drive`. The full `drive` scope is broader than editing alone needs, but the comment and suggestion tools (listing, replying to, and resolving comments on documents you already have) operate through the Drive API on arbitrary existing files, which the narrower `drive.file` scope cannot reach. `drive` is the minimum that covers the full tool set; if you don't need the comment tools, a fork could drop to a narrower scope.
 - **Credentials at rest.** The OAuth client secret lives at `~/.config/verified-googledocs-mcp/credentials.json`; the cached token (including the refresh token) is written to `~/.config/verified-googledocs-mcp/token.json` with owner-only permissions (`0600`, under a `0700` directory). Treat both as secrets: a leaked refresh token grants your full `drive`+`documents` access until you revoke it in your Google Account's security settings. Neither file is ever committed (both are gitignored).
 - **Audit log.** Every mutation appends to `~/.local/state/verified-googledocs-mcp/audit.jsonl` (also `0600`). Each line records the timestamp, document ID, tab ID, tool name, and the evidence payload — which includes before/after **content excerpts**. To log the metadata without the excerpts, set the environment variable `VERIFIED_GOOGLEDOCS_MCP_AUDIT_EXCERPTS` to a falsey value (`0`, `false`, `no`, or `off`); the `before`/`after` fields are then replaced with `"[redacted; N chars]"` and every other field is kept. Override the log location with `XDG_STATE_HOME`.
-- **Local file diffs.** `diff_tab_vs_file` reads a local file so it can compare a Doc tab with markdown on disk. It resolves symlinks before reading and only allows paths under `VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS` (a platform path-list; defaults to the server process working directory). It also refuses files larger than `VERIFIED_GOOGLEDOCS_MCP_MAX_DIFF_FILE_BYTES` (default `1000000`).
+- **Local file diffs.** `diff_tab_vs_file` reads a local file so it can compare a Doc tab with markdown on disk. It resolves symlinks before reading and only allows paths under `VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS` (a platform path-list; defaults to the user's **home directory**, not the server process's working directory). The home-directory default exists because MCP clients typically register this server pinned to one repo (e.g. `--directory /path/to/GoogleDocs-MCP`), while the diff target is almost always in whichever *other* project the caller is actually working in — scoping to the launch directory made every cross-repo diff fail by default. Narrow it further (e.g. back to a single repo) or widen it by setting `VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS` on the server process to a `:`-separated (`;` on Windows) list of directories, then restart the server — a rejected path's error names the env var and includes the currently configured `allowed_roots` so you can see exactly what's missing. It's still a real boundary, not unrestricted: an agent asking to diff against `/etc/passwd` or another user's home directory is refused. A home-directory-wide default also has to defend against a document's own content tricking an agent into reading credentials (prompt injection) — e.g. a paragraph instructing "diff against `~/.ssh/id_rsa`" — so `.ssh`, `.aws`, `.gnupg`, `.netrc`, `.git-credentials`, `.config/gh`, `.docker/config.json`, and `.npmrc` under the home directory are denylisted unconditionally, regardless of the configured allowed roots. It also refuses files larger than `VERIFIED_GOOGLEDOCS_MCP_MAX_DIFF_FILE_BYTES` (default `1000000`).
 
 ## Error codes
 
@@ -265,6 +265,7 @@ Failures return a typed envelope (`error_code`, `message`, `diagnostics`, `retry
 | `INVALID_INPUT` | Empty or contradictory arguments |
 | `IMAGE_SOURCE_UNSUPPORTED` | Image source is a local path; a fetchable URL is required |
 | `AUTH_EXPIRED` | No valid token; run `verified-googledocs-mcp auth` |
+| `INDEX_SIMULATION_FAILED` | A markdown write's compiled requests would land at an invalid index; caught before the API call. Raised identically by `dry_run` and the real write, so a passing `dry_run` always means the write will pass too |
 
 ## Development
 

@@ -134,13 +134,14 @@ def read_tab(
     doc: dict[str, Any],
     doc_id: str,
     tab_id: str,
-    format: Literal["markdown", "structured"] = "markdown",
+    format: Literal["markdown", "structured", "outline"] = "markdown",
 ) -> ReadResult:
     """Return the content of a specific tab.
 
     Use read_document (the MCP tool) when you want to read a Google Doc tab
-    as markdown or as a structured representation of its paragraphs and style
-    runs. This function is the pure-transform core of that tool.
+    as markdown, as a structured representation of its paragraphs and style
+    runs, or as a lightweight headings-only outline. This function is the
+    pure-transform core of that tool.
 
     Raises ValueError with the list of available tabs if tab_id is not found.
     """
@@ -160,6 +161,18 @@ def read_tab(
             content=md,
             revision_id=revision_id,
             lossy_elements=[{"kind": e.kind, "placeholder": e.placeholder} for e in lossy],
+        )
+
+    if format == "outline":
+        # Headings only, in document order — for callers that only need
+        # geometry (heading text/level/position) and don't need to pull the
+        # whole tab as markdown just to find section boundaries.
+        return ReadResult(
+            doc_id=doc_id,
+            tab_id=tab_id,
+            format="outline",
+            content={"headings": _extract_headings(body)},
+            revision_id=revision_id,
         )
 
     # Structured format: return the raw paragraph data with positions and style.
@@ -214,6 +227,44 @@ def _extract_structured(body: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _extract_headings(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return every heading paragraph in *body*, unfiltered, in document order.
+
+    Each entry: ``{"level": int, "text": str, "start_index": int, "end_index": int}``.
+    ``end_index`` is the heading paragraph's own extent — not a section range
+    (see find_sections_in, which computes "through the next heading" ranges
+    for targeted edits). Shared by find_sections_in (needle-matches over
+    these) and read_document's format="outline" (returns them all).
+    """
+    headings: list[dict[str, Any]] = []
+    for elem in body.get("content", []):
+        if "paragraph" not in elem:
+            continue
+        para = elem["paragraph"]
+        style = para.get("paragraphStyle", {}).get("namedStyleType", "NORMAL_TEXT")
+        if not style.startswith("HEADING_"):
+            continue
+        text_parts = [
+            inline["textRun"].get("content", "")
+            for inline in para.get("elements", [])
+            if "textRun" in inline
+        ]
+        full_text = "".join(text_parts).rstrip("\n")
+        try:
+            level = int(style.rsplit("_", 1)[-1])
+        except ValueError:
+            level = 0
+        headings.append(
+            {
+                "level": level,
+                "text": full_text,
+                "start_index": elem.get("startIndex", 0),
+                "end_index": elem.get("endIndex", 0),
+            }
+        )
+    return headings
+
+
 @dataclass
 class SectionMatch:
     heading: str
@@ -258,23 +309,13 @@ def find_sections_in(
     # elements. A section with no following heading runs to here.
     tab_end = max((e.get("endIndex", 0) for e in content if "endIndex" in e), default=0)
 
-    # Collect every heading paragraph in document order with its start index and
-    # full text. The section for heading i ends at the start of heading i+1.
-    headings: list[tuple[int, str]] = []  # (start_index, full_text)
-    for elem in content:
-        if "paragraph" not in elem:
-            continue
-        para = elem["paragraph"]
-        style = para.get("paragraphStyle", {}).get("namedStyleType", "NORMAL_TEXT")
-        if not style.startswith("HEADING_"):
-            continue
-        text_parts = [
-            inline["textRun"].get("content", "")
-            for inline in para.get("elements", [])
-            if "textRun" in inline
-        ]
-        full_text = "".join(text_parts).rstrip("\n")
-        headings.append((elem.get("startIndex", 0), full_text))
+    # Collect every heading paragraph in document order with its start index
+    # and full text. The section for heading i ends at the start of heading
+    # i+1. (start_index, full_text) — same headings _extract_headings finds,
+    # but section-range end computation below is specific to this function.
+    headings: list[tuple[int, str]] = [
+        (h["start_index"], h["text"]) for h in _extract_headings(body)
+    ]
 
     matches: list[SectionMatch] = []
     for i, (start_index, full_text) in enumerate(headings):
