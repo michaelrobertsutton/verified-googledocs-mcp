@@ -317,7 +317,9 @@ def test_table_cell_bold_style_span_shifted_for_reverse_insertion():
     # "Right" is the higher-index cell; "Left" is inserted after it in the
     # batch, shifting "Right"'s already-placed text forward by len("Left").
     bold_styles = _find_requests(reqs, "updateTextStyle")
-    right_style = next(s for s in bold_styles if s["range"]["startIndex"] == right_index + len("Left"))
+    right_style = next(
+        s for s in bold_styles if s["range"]["startIndex"] == right_index + len("Left")
+    )
     assert right_style["range"]["endIndex"] == right_index + len("Left") + len("Right")
 
     # "Left" is the lowest-index cell, inserted last — nothing shifts it.
@@ -337,13 +339,7 @@ def test_table_first_element_after_heading():
 
 
 def test_multi_row_table_all_cells_present():
-    src = (
-        "| A | B |\n"
-        "|---|---|\n"
-        "| r0c0 | r0c1 |\n"
-        "| r1c0 | r1c1 |\n"
-        "| r2c0 | r2c1 |\n"
-    )
+    src = "| A | B |\n|---|---|\n| r0c0 | r0c1 |\n| r1c0 | r1c1 |\n| r2c0 | r2c1 |\n"
     reqs = compile_markdown(src, start_index=1)
     combined = "".join(_insert_texts(reqs))
     for expected in ("r0c0", "r0c1", "r1c0", "r1c1", "r2c0", "r2c1"):

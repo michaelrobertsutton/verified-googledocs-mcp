@@ -160,7 +160,5 @@ def test_growth_matches_final_cursor_position():
 
     # The last insertText in the request list is "After.\n"; its index tells
     # us exactly where the compiler's cursor landed after the whole document.
-    last_para_start = max(
-        r["insertText"]["location"]["index"] for r in reqs if "insertText" in r
-    )
+    last_para_start = max(r["insertText"]["location"]["index"] for r in reqs if "insertText" in r)
     assert insert_at + growth >= last_para_start

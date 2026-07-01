@@ -898,9 +898,7 @@ def _blocks_structurally_equal(a: dict[str, Any], b: dict[str, Any]) -> bool:
         # Compare cell contents too, not just dimensions — a table with the
         # right shape but wrong/missing cell text must not read as a match.
         return (
-            a["rows"] == b["rows"]
-            and a["cols"] == b["cols"]
-            and a.get("cells") == b.get("cells")
+            a["rows"] == b["rows"] and a["cols"] == b["cols"] and a.get("cells") == b.get("cells")
         )
     return False
 

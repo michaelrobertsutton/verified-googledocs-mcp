@@ -216,9 +216,7 @@ class TestTableWrites:
         assert content.index("mid2") < content.index("Trailing paragraph")
 
     async def test_table_as_last_element(self, client, scratch_doc):
-        markdown = (
-            "# Report\n\nLead-in paragraph.\n\n| A | B |\n|---|---|\n| last1 | last2 |\n"
-        )
+        markdown = "# Report\n\nLead-in paragraph.\n\n| A | B |\n|---|---|\n| last1 | last2 |\n"
         r = await client.call_tool(
             "replace_tab_markdown",
             {"doc_id": scratch_doc.doc_id, "tab_id": scratch_doc.primary_tab, "markdown": markdown},
@@ -231,13 +229,7 @@ class TestTableWrites:
         assert "last1" in content and "last2" in content
 
     async def test_multi_row_table(self, client, scratch_doc):
-        markdown = (
-            "| A | B |\n"
-            "|---|---|\n"
-            "| r0c0 | r0c1 |\n"
-            "| r1c0 | r1c1 |\n"
-            "| r2c0 | r2c1 |\n"
-        )
+        markdown = "| A | B |\n|---|---|\n| r0c0 | r0c1 |\n| r1c0 | r1c1 |\n| r2c0 | r2c1 |\n"
         r = await client.call_tool(
             "replace_tab_markdown",
             {"doc_id": scratch_doc.doc_id, "tab_id": scratch_doc.primary_tab, "markdown": markdown},
@@ -269,15 +261,15 @@ class TestTableWrites:
             "\\", ""
         )
         assert "This is a first multi-sentence cell. It has two sentences." in content
-        assert (
-            "This is a second cell with its own multi-sentence content. Right here." in content
-        )
+        assert "This is a second cell with its own multi-sentence content. Right here." in content
 
     async def test_styled_and_linked_table_cells(self, client, scratch_doc):
         """Exercises the intra-cell style-span re-anchoring fix: bold/link
         spans must land on the right text after reverse-order cell
         insertion shifts an already-inserted cell's text forward."""
-        markdown = "| Left | Right |\n|---|---|\n| **bold cell** | [a link](https://example.com) |\n"
+        markdown = (
+            "| Left | Right |\n|---|---|\n| **bold cell** | [a link](https://example.com) |\n"
+        )
         r = await client.call_tool(
             "replace_tab_markdown",
             {"doc_id": scratch_doc.doc_id, "tab_id": scratch_doc.primary_tab, "markdown": markdown},
