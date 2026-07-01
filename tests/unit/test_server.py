@@ -98,6 +98,20 @@ class TestReadDocumentTool:
         assert "paragraphs" in data["content"]
 
     @pytest.mark.asyncio
+    async def test_outline_format(self) -> None:
+        doc = multi_tab_doc()
+        p1, p2 = _mock_fetch(doc)
+        with p1, p2:
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "read_document",
+                    {"doc_id": "doc-multi-tab", "tab_id": "tab-1", "format": "outline"},
+                )
+        data = result.data
+        assert data["format"] == "outline"
+        assert [h["text"] for h in data["content"]["headings"]] == ["Introduction", "Methods"]
+
+    @pytest.mark.asyncio
     async def test_revision_id_in_response(self) -> None:
         doc = multi_tab_doc()
         p1, p2 = _mock_fetch(doc)

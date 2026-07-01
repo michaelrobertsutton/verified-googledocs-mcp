@@ -133,6 +133,23 @@ class TestParsedMarkdownBlocks:
         assert blocks[0]["rows"] == 2
         assert blocks[0]["cols"] == 2
 
+    def test_table_block_captures_cell_contents(self) -> None:
+        """Regression test: table equality must not be rows/cols-only — a
+        table with the right shape but wrong cell text must not read as a
+        structural match (see _blocks_structurally_equal)."""
+        md = "| A | B |\n|---|---|\n| one sentence. | another sentence. |\n"
+        blocks = _parse_markdown_blocks(md)
+        assert blocks[0]["cells"] == [["A", "B"], ["one sentence.", "another sentence."]]
+
+    def test_table_blocks_with_same_shape_but_different_cells_are_not_equal(self) -> None:
+        from verified_googledocs_mcp.verify import _blocks_structurally_equal
+
+        same_shape_a = _parse_markdown_blocks("| X | Y |\n|---|---|\n")[0]
+        same_shape_b = _parse_markdown_blocks("| P | Q |\n|---|---|\n")[0]
+        assert same_shape_a["rows"] == same_shape_b["rows"]
+        assert same_shape_a["cols"] == same_shape_b["cols"]
+        assert not _blocks_structurally_equal(same_shape_a, same_shape_b)
+
     def test_list_item_blocks(self) -> None:
         blocks = _parse_markdown_blocks("- item one\n- item two")
         list_items = [b for b in blocks if b["type"] == "list_item"]

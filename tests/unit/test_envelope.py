@@ -30,6 +30,7 @@ class TestErrorCodeCoverage:
         "INVALID_INPUT",
         "IMAGE_SOURCE_UNSUPPORTED",
         "AUTH_EXPIRED",
+        "INDEX_SIMULATION_FAILED",
     }
 
     def test_all_codes_exist(self):
@@ -37,7 +38,7 @@ class TestErrorCodeCoverage:
         assert actual == self.EXPECTED_CODES
 
     def test_enum_count(self):
-        assert len(ErrorCode) == 13
+        assert len(ErrorCode) == 14
 
 
 class TestRetryablePolicy:

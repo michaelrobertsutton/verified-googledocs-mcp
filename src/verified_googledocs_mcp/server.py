@@ -92,7 +92,7 @@ def list_tabs(doc_id: str) -> dict[str, Any]:
 def read_document(
     doc_id: str,
     tab_id: str,
-    format: Literal["markdown", "structured"] = "markdown",
+    format: Literal["markdown", "structured", "outline"] = "markdown",
 ) -> dict[str, Any]:
     """Read the content of a specific tab in a Google Doc.
 
@@ -105,6 +105,13 @@ def read_document(
 
     format="structured": returns paragraph positions and style runs from the
     raw Docs JSON, suitable for computing exact edit ranges.
+
+    format="outline": returns only the tab's headings (level, text,
+    start_index, end_index), in document order. Use this when you only need
+    geometry — e.g. to see the tab's section structure before deciding where
+    to write — without pulling the whole tab as markdown. If you already know
+    which heading you want to target, find_sections is the lighter tool: it
+    filters to matches and returns section (not just heading) ranges.
 
     Drive's files.export cannot scope to a single tab, which is why this
     server uses its own Docs JSON converter for markdown output.
@@ -493,6 +500,12 @@ def replace_range_markdown(
 
     Set dry_run=true to validate and preview without writing.
 
+    The returned payload (applied, revisions, structural_match, input_blocks/
+    post_blocks) is itself the confirmation the write landed — it already
+    re-read the document and diffed it against the input. A follow-up
+    read_document to double-check is a redundant round-trip; only re-read if
+    you need the content for a subsequent step.
+
     Errors:
       STALE_RANGE          – range stamp is outdated; re-run find_sections
       UNSUPPORTED_MARKDOWN – markdown contains an unsupported construct
@@ -540,6 +553,12 @@ def replace_tab_markdown(
 
     Set dry_run=true to validate and preview without writing.
 
+    The returned payload (applied, revisions, structural_match, input_blocks/
+    post_blocks) is itself the confirmation the write landed — it already
+    re-read the document and diffed it against the input. A follow-up
+    read_document to double-check is a redundant round-trip; only re-read if
+    you need the content for a subsequent step.
+
     Errors:
       UNSUPPORTED_MARKDOWN – markdown contains an unsupported construct
       INVALID_INPUT        – structural guardrail refused
@@ -578,6 +597,12 @@ def append_markdown(
     disturbing existing content. Inserts before the final trailing newline.
 
     Set dry_run=true to validate and preview without writing.
+
+    The returned payload (applied, revisions, structural_match, input_blocks/
+    post_blocks) is itself the confirmation the write landed — it already
+    re-read the document and diffed it against the input. A follow-up
+    read_document to double-check is a redundant round-trip; only re-read if
+    you need the content for a subsequent step.
 
     Errors:
       UNSUPPORTED_MARKDOWN – markdown contains an unsupported construct

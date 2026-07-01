@@ -57,6 +57,7 @@ class ErrorCode(Enum):
     INVALID_INPUT = "INVALID_INPUT"
     IMAGE_SOURCE_UNSUPPORTED = "IMAGE_SOURCE_UNSUPPORTED"
     AUTH_EXPIRED = "AUTH_EXPIRED"
+    INDEX_SIMULATION_FAILED = "INDEX_SIMULATION_FAILED"
 
 
 # Which codes signal a transient condition worth retrying.
@@ -690,7 +691,7 @@ def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
     """Parse markdown into a list of block descriptors for structural comparison.
 
     Returns a list of dicts, each describing a block:
-        {type, level?, text?, rows?, cols?, nesting?, link_targets}
+        {type, level?, text?, rows?, cols?, cells?, nesting?, link_targets}
 
     Accepted lossy transforms — differences treated as equivalent:
     - Whitespace runs: normalized to single space
@@ -747,20 +748,22 @@ def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
                 parts.append(_inline_text(c))
         return "".join(parts)
 
-    def _table_dims(node: Any) -> tuple[int, int, list[str]]:
+    def _table_dims(node: Any) -> tuple[int, int, list[str], list[list[str]]]:
         rows = 0
         max_cols = 0
         targets: list[str] = []
+        cells: list[list[str]] = []
         for sec in node.children:
             if sec.type in ("thead", "tbody"):
                 for tr in sec.children:
                     if tr.type == "tr":
                         rows += 1
-                        cols = sum(1 for c in tr.children if c.type in ("td", "th"))
-                        max_cols = max(max_cols, cols)
-                        for cell in tr.children:
+                        row_cells = [c for c in tr.children if c.type in ("td", "th")]
+                        max_cols = max(max_cols, len(row_cells))
+                        cells.append([_norm(_inline_text(c)) for c in row_cells])
+                        for cell in row_cells:
                             targets.extend(_links(cell))
-        return rows, max_cols, targets
+        return rows, max_cols, targets, cells
 
     def _list_items(node: Any, nesting: int) -> None:
         for item in node.children:
@@ -802,8 +805,10 @@ def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
             elif t in ("bullet_list", "ordered_list"):
                 _list_items(child, 0)
             elif t == "table":
-                r, c, lts = _table_dims(child)
-                blocks.append({"type": "table", "rows": r, "cols": c, "link_targets": lts})
+                r, c, lts, cells = _table_dims(child)
+                blocks.append(
+                    {"type": "table", "rows": r, "cols": c, "cells": cells, "link_targets": lts}
+                )
             elif t in ("root", "thead", "tbody"):
                 _walk(child)
 
@@ -890,7 +895,11 @@ def _blocks_structurally_equal(a: dict[str, Any], b: dict[str, Any]) -> bool:
     if t == "list_item":
         return a["nesting"] == b["nesting"] and a["text"] == b["text"]
     if t == "table":
-        return a["rows"] == b["rows"] and a["cols"] == b["cols"]
+        # Compare cell contents too, not just dimensions — a table with the
+        # right shape but wrong/missing cell text must not read as a match.
+        return (
+            a["rows"] == b["rows"] and a["cols"] == b["cols"] and a.get("cells") == b.get("cells")
+        )
     return False
 
 

@@ -130,6 +130,62 @@ class TestReadTab:
         result = read_tab(doc, "doc-multi-tab", "tab-1")
         assert result.format == "markdown"
 
+    def test_read_tab_outline_format(self) -> None:
+        doc = multi_tab_doc()
+        result = read_tab(doc, "doc-multi-tab", "tab-1", format="outline")
+        assert result.format == "outline"
+        assert isinstance(result.content, dict)
+        headings = result.content["headings"]
+        assert [h["text"] for h in headings] == ["Introduction", "Methods"]
+        assert [h["level"] for h in headings] == [1, 2]
+
+    def test_read_tab_outline_carries_positions(self) -> None:
+        doc = multi_tab_doc()
+        result = read_tab(doc, "doc-multi-tab", "tab-1", format="outline")
+        intro = result.content["headings"][0]
+        assert intro["start_index"] == 1
+        assert intro["end_index"] == 16
+
+    def test_read_tab_outline_omits_body_text(self) -> None:
+        """The outline is headings only — no paragraph/list/table content."""
+        doc = multi_tab_doc()
+        result = read_tab(doc, "doc-multi-tab", "tab-1", format="outline")
+        assert "content" not in result.content
+        assert set(result.content.keys()) == {"headings"}
+
+    def test_read_tab_outline_defends_against_malformed_style_suffix(self) -> None:
+        """Defensive fallback: a heading style that doesn't parse as
+        HEADING_<digit> (not producible by the real Docs API, since only
+        TITLE/SUBTITLE/HEADING_1..6 exist) must not raise — level falls back
+        to 0 rather than propagating a ValueError."""
+        doc = {
+            "documentId": "doc-malformed-style",
+            "revisionId": "rev-x",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "tab-1", "title": "T", "index": 0},
+                    "documentTab": {
+                        "body": {
+                            "content": [
+                                {
+                                    "startIndex": 1,
+                                    "endIndex": 6,
+                                    "paragraph": {
+                                        "paragraphStyle": {"namedStyleType": "HEADING_X"},
+                                        "elements": [
+                                            {"textRun": {"content": "Odd\n"}},
+                                        ],
+                                    },
+                                }
+                            ]
+                        }
+                    },
+                }
+            ],
+        }
+        result = read_tab(doc, "doc-malformed-style", "tab-1", format="outline")
+        assert result.content["headings"][0]["level"] == 0
+
 
 class TestFindSections:
     def test_find_by_exact_heading(self) -> None:

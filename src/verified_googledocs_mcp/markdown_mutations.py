@@ -26,6 +26,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .docs import IMPLICIT_TAB_ID, _available_tab_ids, _find_tab_body, fetch_document
+from .index_sim import IndexSimulationError, compiled_requests_growth, simulate_requests
 from .markdown import to_markdown
 from .markdown_writer import UnsupportedMarkdown, compile_markdown
 from .mutations import _translate_http_error
@@ -205,6 +206,30 @@ def _fail_if_range_verification_failed(
 # ---------------------------------------------------------------------------
 
 
+def _simulate_or_raise(
+    requests: list[dict[str, Any]],
+    *,
+    tab_start: int,
+    tab_end: int,
+) -> None:
+    """Run the offline index simulator over an assembled request list.
+
+    Raises a typed INDEX_SIMULATION_FAILED error on any invalid index,
+    instead of letting an invalid batch reach the live API as a raw 400.
+    Called identically from dry_run and the real write's pre-flight (on the
+    exact same assembled requests list), so the two paths can never disagree
+    about whether a write is index-valid.
+    """
+    try:
+        simulate_requests(requests, tab_start=tab_start, tab_end=tab_end)
+    except IndexSimulationError as exc:
+        raise _make_error(
+            ErrorCode.INDEX_SIMULATION_FAILED,
+            str(exc),
+            {"request_index": exc.request_index, "request": exc.request},
+        ) from exc
+
+
 def _stamp_tab_id(node: Any, tab_id: str) -> None:
     """Recursively stamp tab_id onto every location/range in a request tree (#48).
 
@@ -367,22 +392,7 @@ def execute_replace_range_markdown(
     # --- Blast-radius baseline -----------------------------------------------
     outside_before = _count_structural_elements_outside_range(body, start_index, end_index)
 
-    # --- Dry run -------------------------------------------------------------
-    if dry_run:
-        evidence: dict[str, Any] = {
-            "applied": False,
-            "revision_before": revision_before,
-            "revision_after": "",
-            "dry_run": True,
-            "planned_requests": len(compiled_requests),
-            "structural_elements_in_range": _count_structural_elements_in_range(
-                body, start_index, end_index
-            ),
-            "audit_logged": False,
-        }
-        return evidence
-
-    # --- batchUpdate: delete range then insert compiled content ---------------
+    # --- Assemble the full batch (shared by dry_run and the real write) ------
     # NOTE: Docs API cannot delete the final trailing newline of a tab body.
     # We delete to end_index-1 to avoid that constraint. (Live-API caveat:
     # needs verification in a fixture session with real credentials.)
@@ -400,6 +410,28 @@ def execute_replace_range_markdown(
     ] + compiled_requests
     _stamp_tab_id(requests, tab_id)
 
+    # --- Index-bounds simulation (makes dry_run authoritative) ---------------
+    # Runs on the exact assembled list that would be sent, so dry_run and the
+    # real write can never disagree about whether it's index-valid.
+    tab_start, tab_end = _tab_extent(body)
+    _simulate_or_raise(requests, tab_start=tab_start, tab_end=tab_end)
+
+    # --- Dry run -------------------------------------------------------------
+    if dry_run:
+        evidence: dict[str, Any] = {
+            "applied": False,
+            "revision_before": revision_before,
+            "revision_after": "",
+            "dry_run": True,
+            "planned_requests": len(compiled_requests),
+            "structural_elements_in_range": _count_structural_elements_in_range(
+                body, start_index, end_index
+            ),
+            "audit_logged": False,
+        }
+        return evidence
+
+    # --- batchUpdate: delete range then insert compiled content ---------------
     body_payload: dict[str, Any] = {
         "requests": requests,
         "writeControl": {"requiredRevisionId": revision_before},
@@ -440,9 +472,11 @@ def execute_replace_range_markdown(
     # --- Assemble evidence ---------------------------------------------------
     # Bound the re-export slice to exactly the inserted content so adjacent
     # paragraphs beyond the write are not swept in and cause spurious mismatches.
-    exact_end = start_index + sum(
-        len(r.get("insertText", {}).get("text", "")) for r in compiled_requests if "insertText" in r
-    )
+    # Uses compiled_requests_growth (UTF-16, and it counts a table's structural
+    # markers too) rather than a Python-len() sum of insertText, which
+    # undercounts for astral emoji and for any table (whose row/cell/table-end
+    # markers never appear in an insertText at all).
+    exact_end = start_index + compiled_requests_growth(compiled_requests)
     evidence = assemble_range_markdown_evidence(
         input_markdown=markdown,
         post_body=post_body,
@@ -546,20 +580,7 @@ def execute_replace_tab_markdown(
                     },
                 )
 
-    # --- Dry run -------------------------------------------------------------
-    if dry_run:
-        evidence: dict[str, Any] = {
-            "applied": False,
-            "revision_before": revision_before,
-            "revision_after": "",
-            "dry_run": True,
-            "planned_requests": len(compiled_requests),
-            "tab_extent": {"start": tab_start, "end": tab_end},
-            "audit_logged": False,
-        }
-        return evidence
-
-    # --- batchUpdate: delete tab body then insert compiled content -----------
+    # --- Assemble the full batch (shared by dry_run and the real write) ------
     # NOTE: Cannot delete the trailing newline of the tab body (end-1).
     # (Live-API caveat: needs verification in a fixture session.)
     delete_end = max(tab_start, tab_end - 1)
@@ -579,6 +600,25 @@ def execute_replace_tab_markdown(
     requests.extend(compiled_requests)
     _stamp_tab_id(requests, tab_id)
 
+    # --- Index-bounds simulation (makes dry_run authoritative) ---------------
+    # Runs on the exact assembled list that would be sent, so dry_run and the
+    # real write can never disagree about whether it's index-valid.
+    _simulate_or_raise(requests, tab_start=tab_start, tab_end=tab_end)
+
+    # --- Dry run -------------------------------------------------------------
+    if dry_run:
+        evidence: dict[str, Any] = {
+            "applied": False,
+            "revision_before": revision_before,
+            "revision_after": "",
+            "dry_run": True,
+            "planned_requests": len(compiled_requests),
+            "tab_extent": {"start": tab_start, "end": tab_end},
+            "audit_logged": False,
+        }
+        return evidence
+
+    # --- batchUpdate: delete tab body then insert compiled content -----------
     body_payload: dict[str, Any] = {
         "requests": requests,
         "writeControl": {"requiredRevisionId": revision_before},
@@ -661,7 +701,7 @@ def execute_append_markdown(
             {"available_tabs": available},
         )
 
-    _, tab_end = _tab_extent(body)
+    tab_start, tab_end = _tab_extent(body)
     # Append inserts before the final newline to avoid the trailing-newline constraint.
     insert_at = max(1, tab_end - 1)
     # Fix #37: open a fresh paragraph by inserting a newline first, then place
@@ -688,6 +728,11 @@ def execute_append_markdown(
     }
     requests: list[dict[str, Any]] = [newline_request, *compiled_requests]
     _stamp_tab_id(requests, tab_id)
+
+    # --- Index-bounds simulation (makes dry_run authoritative) ---------------
+    # Runs on the exact assembled list that would be sent, so dry_run and the
+    # real write can never disagree about whether it's index-valid.
+    _simulate_or_raise(requests, tab_start=tab_start, tab_end=tab_end)
 
     # --- Dry run -------------------------------------------------------------
     if dry_run:
@@ -725,15 +770,10 @@ def execute_append_markdown(
     # --- Assemble evidence ---------------------------------------------------
     # Use content_start (not insert_at) so the evidence window excludes the
     # original trailing paragraph and covers only the newly appended content.
-    approx_end = (
-        content_start
-        + sum(
-            len(r.get("insertText", {}).get("text", ""))
-            for r in compiled_requests
-            if "insertText" in r
-        )
-        + 50
-    )
+    # compiled_requests_growth (UTF-16, counts table structural markers too)
+    # rather than a Python-len() sum of insertText avoids undercounting for
+    # astral emoji or any appended table; +50 remains a defensive margin.
+    approx_end = content_start + compiled_requests_growth(compiled_requests) + 50
     evidence = assemble_range_markdown_evidence(
         input_markdown=markdown,
         post_body=post_body,
@@ -924,11 +964,55 @@ _ALLOWED_FILE_ROOTS_ENV = "VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS"
 _MAX_DIFF_FILE_BYTES_ENV = "VERIFIED_GOOGLEDOCS_MCP_MAX_DIFF_FILE_BYTES"
 _DEFAULT_MAX_DIFF_FILE_BYTES = 1_000_000
 
+# Well-known credential/secrets locations, relative to the user's home
+# directory. Denylisted unconditionally -- regardless of the configured
+# allowed roots -- because the risk this guards against is a document's own
+# content tricking an agent into reading credentials (prompt injection), not
+# an operator deliberately misconfiguring VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS.
+# Widening the default allowed root to the home directory (below) makes this
+# denylist load-bearing: it is what keeps that default from exposing
+# ~/.ssh, ~/.aws, etc. to a doc-driven diff.
+_SENSITIVE_HOME_RELATIVE_DENYLIST = (
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".netrc",
+    ".git-credentials",
+    ".config/gh",
+    ".docker/config.json",
+    ".npmrc",
+)
+
 
 def _allowed_file_roots() -> list[Path]:
+    """Directories diff_tab_vs_file may read a file from.
+
+    Defaults to the user's home directory, not the server process's working
+    directory: MCP clients commonly register this server pinned to one repo
+    (e.g. `--directory /path/to/GoogleDocs-MCP`), while a diff target usually
+    lives in whichever *other* repo/project the caller is actually working
+    in. Scoping to cwd by default made every cross-repo diff fail unless the
+    operator pre-configured this env var. Home still excludes system paths
+    and other users' home directories, and _is_denylisted_sensitive_path
+    below unconditionally blocks well-known credential locations under it —
+    set this env var explicitly to narrow (or further widen) the allowed
+    roots themselves.
+    """
     raw = os.environ.get(_ALLOWED_FILE_ROOTS_ENV)
-    root_values = [p for p in raw.split(os.pathsep) if p] if raw is not None else [os.getcwd()]
+    root_values = [p for p in raw.split(os.pathsep) if p] if raw is not None else [str(Path.home())]
     return [Path(value).expanduser().resolve(strict=False) for value in root_values]
+
+
+def _is_denylisted_sensitive_path(resolved: Path) -> bool:
+    """True if *resolved* is (or is inside) a well-known credential location
+    under the user's home directory — see _SENSITIVE_HOME_RELATIVE_DENYLIST.
+    """
+    home = Path.home().resolve(strict=False)
+    for entry in _SENSITIVE_HOME_RELATIVE_DENYLIST:
+        denied = (home / entry).resolve(strict=False)
+        if resolved == denied or resolved.is_relative_to(denied):
+            return True
+    return False
 
 
 def _max_diff_file_bytes() -> int:
@@ -963,15 +1047,34 @@ def _resolve_allowed_diff_file(file_path: str) -> Path:
             {"file_path": file_path},
         ) from exc
 
+    if _is_denylisted_sensitive_path(resolved):
+        raise _make_error(
+            ErrorCode.INVALID_INPUT,
+            (
+                "File path resolves to a well-known credential/secrets location "
+                "and is never allowed by diff_tab_vs_file, regardless of "
+                f"{_ALLOWED_FILE_ROOTS_ENV}."
+            ),
+            {"file_path": file_path, "resolved_path": str(resolved)},
+        )
+
     allowed_roots = _allowed_file_roots()
     if not any(resolved.is_relative_to(root) for root in allowed_roots):
         raise _make_error(
             ErrorCode.INVALID_INPUT,
-            "File path is outside the allowed roots for diff_tab_vs_file.",
+            (
+                "File path is outside the allowed roots for diff_tab_vs_file. "
+                "By default this is the user's home directory — the file is "
+                "outside that (or the caller has narrowed it), so set "
+                f"{_ALLOWED_FILE_ROOTS_ENV} on the server process to a "
+                f"{os.pathsep!r}-separated list of directories to widen it (e.g. in "
+                "the MCP server's env config), then restart the server."
+            ),
             {
                 "file_path": file_path,
                 "resolved_path": str(resolved),
                 "allowed_roots": [str(root) for root in allowed_roots],
+                "env_var": _ALLOWED_FILE_ROOTS_ENV,
             },
         )
 
