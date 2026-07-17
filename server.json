@@ -32,7 +32,7 @@
         },
         {
           "name": "VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS",
-          "description": "Path-list of roots diff_tab_vs_file may read from. Defaults to the server process working directory.",
+          "description": "Path-list of roots diff_tab_vs_file may read from and export_pdf may write to. Defaults to the user's home directory, not the server process working directory.",
           "isRequired": false,
           "isSecret": false
         },
