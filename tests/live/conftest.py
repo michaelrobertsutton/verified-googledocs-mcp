@@ -41,13 +41,15 @@ from typing import Any
 
 import pytest
 
-# Canonical seeded fixture (issue #1, extended in #31). Override via env.
-DEFAULT_DOC_ID = "1Zm_6bAwA7UH1DKkGVL3kg9XcQ6rIZHmUFcQPTcoJb6Y"
+# Canonical seeded fixture (issue #1, extended in #31; re-seeded 2026-07-17
+# after the original doc was hard-deleted from Drive). Override via env.
+DEFAULT_DOC_ID = "1VMCODszIWJ5MJyRbU2dkzxLLEwrMxWogyh7bS5tE-FQ"
 
 # Real substrate seeded into the canonical fixture (and inherited by every
 # files.copy of it): a HEADING_1 paragraph and a nested tab. See #31.
 CANONICAL_HEADING_TEXT = "Text Hazards"  # HEADING_1 in t.0, resolves to range [1, 14)
-CANONICAL_NESTED_TAB_ID = "t.22v4eg81pdjk"  # "Nested Tab", child of t.0
+CANONICAL_TAB2_ID = "t.ez9l4xnkkmue"  # "Unicode Hazards", second top-level tab
+CANONICAL_NESTED_TAB_ID = "t.e9j0c3yhe3v8"  # "Nested Tab", child of t.0
 
 
 # ---------------------------------------------------------------------------

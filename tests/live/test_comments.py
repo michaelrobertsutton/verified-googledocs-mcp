@@ -14,8 +14,12 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-# Seeded on the canonical fixture (issue #1).
-SEEDED_THREAD_WITH_REPLY = "AAAB9jbwLrg"  # curly-quotes comment, has one reply
+# Seeded on the canonical fixture (issue #1; comments re-seeded 2026-07-17
+# with the replacement fixture doc).
+SEEDED_THREAD_WITH_REPLY = "AAACDP7UzKA"  # curly-quotes comment, has one reply
+# Pending suggestions cannot be created via the REST API (Docs UI only, see
+# docs/fixture-session.md §1) and were lost with the original fixture doc.
+# Recreate them manually in Suggesting mode, then replace these ids.
 SEEDED_SUGGESTION_IDS = {"suggest.ibkkr0jufgxx", "suggest.9ta3rfsy7fng"}
 
 
@@ -29,6 +33,12 @@ def _err(result) -> str:  # type: ignore[no-untyped-def]
 
 
 class TestListOpenItems:
+    @pytest.mark.xfail(
+        reason="pending suggestions must be re-created manually in the Docs UI after the "
+        "2026-07-17 fixture re-seed (docs/fixture-session.md §1); update "
+        "SEEDED_SUGGESTION_IDS with the new ids, then drop this marker",
+        strict=False,
+    )
     async def test_returns_comments_and_suggestions_together(self, client, canonical_doc_id):
         data = (
             await client.call_tool(

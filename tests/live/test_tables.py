@@ -51,9 +51,10 @@ class TestListAndGetTable:
         assert len(tables) == 1
         seeded = tables[0]
         assert seeded["table_index"] == 0
-        assert seeded["rows"] == 1
+        # The markdown pipe table compiles header + data rows: row 0 is the header.
+        assert seeded["rows"] == 2
         assert seeded["columns"] == 2
-        assert seeded["first_row"] == ["seed1", "seed2"]
+        assert seeded["first_row"] == ["Metric", "Detail"]
         assert seeded["preceding_heading"] == "Table Section"
         assert seeded["has_merged_cells"] is False
 
@@ -61,7 +62,7 @@ class TestListAndGetTable:
             "get_table",
             {"doc_id": s.doc_id, "tab_id": s.primary_tab, "table_index": 0},
         )
-        assert got.data["cells"] == [["seed1", "seed2"]]
+        assert got.data["cells"] == [["Metric", "Detail"], ["seed1", "seed2"]]
 
     async def test_bad_table_index_is_table_not_found(self, client, scratch_doc):
         s = scratch_doc
@@ -147,7 +148,7 @@ class TestReplaceTableRow:
             "get_table",
             {"doc_id": s.doc_id, "tab_id": s.primary_tab, "table_index": 0},
         )
-        assert got.data["cells"] == [["keep1", "keep2"]]
+        assert got.data["cells"] == [["A", "B"], ["keep1", "keep2"]]
 
 
 # ---------------------------------------------------------------------------
