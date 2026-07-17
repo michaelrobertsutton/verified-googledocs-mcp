@@ -99,22 +99,26 @@ class TestReadDocument:
 
 class TestListTabs:
     async def test_ids_and_titles_match_real_document(self, client, canonical_doc_id):
+        from tests.live.conftest import CANONICAL_TAB2_ID
+
         data = (await client.call_tool("list_tabs", {"doc_id": canonical_doc_id})).data
         by_id = {t["tab_id"]: t for t in data["tabs"]}
         assert "t.0" in by_id
-        assert "t.a53r2f94k2pt" in by_id
-        assert by_id["t.a53r2f94k2pt"]["title"] == "Unicode Hazards"
+        assert CANONICAL_TAB2_ID in by_id
+        assert by_id[CANONICAL_TAB2_ID]["title"] == "Unicode Hazards"
         # Tabs carry an index reflecting document order.
         assert by_id["t.0"]["index"] == 0
 
     async def test_nested_tab_is_reported(self, client, canonical_doc_id):
-        # t.0 has a child tab "Nested Tab" (t.22v4eg81pdjk) — seeded for #31.
+        # t.0 has a child tab "Nested Tab" — seeded for #31.
+        from tests.live.conftest import CANONICAL_NESTED_TAB_ID
+
         data = (await client.call_tool("list_tabs", {"doc_id": canonical_doc_id})).data
         by_id = {t["tab_id"]: t for t in data["tabs"]}
         children = by_id["t.0"].get("child_tabs", [])
         nested = {c["tab_id"]: c for c in children}
-        assert "t.22v4eg81pdjk" in nested
-        assert nested["t.22v4eg81pdjk"]["title"] == "Nested Tab"
+        assert CANONICAL_NESTED_TAB_ID in nested
+        assert nested[CANONICAL_NESTED_TAB_ID]["title"] == "Nested Tab"
 
 
 # ---------------------------------------------------------------------------

@@ -27,6 +27,10 @@ All notable changes to this project are documented here. The format follows
   `.docker/config.json`, `.npmrc`) closes the resulting exposure to a
   document's own content tricking an agent into reading credentials.
   Rejected paths now name the exact environment variable to set.
+- `server.json`'s `VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS` description was
+  stale (still named only `diff_tab_vs_file` and the old working-directory
+  default); it now names `export_pdf` too and matches the home-directory
+  default.
 
 ### Changed
 - **Breaking:** `list_open_items` now requires either `tab_id` or
@@ -43,6 +47,18 @@ All notable changes to this project are documented here. The format follows
 - Added `VERIFICATION_FAILED` for post-write verification failures.
 - Added `INDEX_SIMULATION_FAILED` for markdown writes whose compiled
   requests would land at an invalid index.
+- Verified table tools: `list_tables` and `get_table` (read-only, with
+  position, size, and preceding-heading context), plus `replace_table_row`
+  and `insert_table` — both carry the same evidence contract as the other
+  mutating tools (post-write re-read, `dry_run` index-simulated identically
+  to the real write) and refuse merged cells or a nested table rather than
+  risk corrupting one.
+- `export_pdf`: exports the whole document to a local PDF, confined to
+  `VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS` and the same credential-path
+  denylist as `diff_tab_vs_file`, with a best-effort render-measured
+  `page_count` (`None` rather than a guessed number when the PDF hides its
+  page markers in a compressed stream).
+- Added `TABLE_NOT_FOUND` for a `table_index` that doesn't exist in the tab.
 
 ## [0.1.0] - 2026-06-14
 

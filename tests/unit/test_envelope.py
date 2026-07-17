@@ -31,6 +31,7 @@ class TestErrorCodeCoverage:
         "IMAGE_SOURCE_UNSUPPORTED",
         "AUTH_EXPIRED",
         "INDEX_SIMULATION_FAILED",
+        "TABLE_NOT_FOUND",
     }
 
     def test_all_codes_exist(self):
@@ -38,7 +39,7 @@ class TestErrorCodeCoverage:
         assert actual == self.EXPECTED_CODES
 
     def test_enum_count(self):
-        assert len(ErrorCode) == 14
+        assert len(ErrorCode) == 15
 
 
 class TestRetryablePolicy:

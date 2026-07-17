@@ -58,6 +58,7 @@ class ErrorCode(Enum):
     IMAGE_SOURCE_UNSUPPORTED = "IMAGE_SOURCE_UNSUPPORTED"
     AUTH_EXPIRED = "AUTH_EXPIRED"
     INDEX_SIMULATION_FAILED = "INDEX_SIMULATION_FAILED"
+    TABLE_NOT_FOUND = "TABLE_NOT_FOUND"
 
 
 # Which codes signal a transient condition worth retrying.
@@ -284,6 +285,22 @@ def _norm_softhyphen(s: str) -> tuple[str, list[int]]:
 def _compose_orig_pos(inner: list[int], outer: list[int]) -> list[int]:
     """Compose two orig_pos maps: inner is applied first, then outer."""
     return [outer[p] for p in inner]
+
+
+def _normalize_cell_text(s: str) -> str:
+    """Normalize a table cell's text for structural-equality comparison.
+
+    Chains the same rung transforms locate() uses — curly/straight quotes,
+    NBSP + whitespace-run collapse (also folds \\x0b via the \\s+ collapse),
+    soft-hyphen strip — discarding the position maps locate() needs (a plain
+    equality check has no use for them), then strips leading/trailing
+    whitespace. Used by assemble_table_row_evidence to compare a post-write
+    cell readback against the requested replacement text.
+    """
+    n, _ = _norm_quotes(s)
+    n, _ = _norm_whitespace(n)
+    n, _ = _norm_softhyphen(n)
+    return n.strip()
 
 
 def _find_all(needle: str, haystack: str) -> list[int]:
@@ -967,3 +984,121 @@ def _inline_object_near(body: dict[str, Any], anchor_para_start: int) -> bool:
         # Non-empty paragraph with no inline object — image is not adjacent.
         return False
     return False
+
+
+# ---------------------------------------------------------------------------
+# Table evidence helpers (pure)
+# ---------------------------------------------------------------------------
+
+
+def assemble_table_row_evidence(
+    *,
+    row_before: list[str],
+    requested_cells: list[str],
+    row_after: list[str],
+    table_index: int,
+    row_index: int,
+    revision_before: str,
+    revision_after: str,
+    applied: bool,
+    audit_logged: bool,
+    audit_log_reason: str = "",
+) -> dict[str, Any]:
+    """Assemble evidence for replace_table_row.
+
+    cells_match compares row_after against requested_cells (what the write was
+    supposed to produce), not against row_before — a cell-by-cell comparison
+    using _normalize_cell_text so curly quotes / NBSP / soft hyphens in the
+    post-write readback don't register as a mismatch against a plain-text
+    request. A length mismatch (should not happen for a well-formed row) is
+    treated as no-match rather than raising.
+
+    Returns a dict with keys:
+        applied, table_index, row_index, row_before, row_after, cells_match,
+        revision_before, revision_after, audit_logged,
+        audit_log_reason (only when non-empty)
+    """
+    cells_match = len(row_after) == len(requested_cells) and all(
+        _normalize_cell_text(after) == _normalize_cell_text(requested)
+        for after, requested in zip(row_after, requested_cells)
+    )
+    evidence: dict[str, Any] = {
+        "applied": applied,
+        "table_index": table_index,
+        "row_index": row_index,
+        "row_before": row_before,
+        "row_after": row_after,
+        "cells_match": cells_match,
+        "revision_before": revision_before,
+        "revision_after": revision_after,
+        "audit_logged": audit_logged,
+    }
+    if audit_log_reason:
+        evidence["audit_log_reason"] = audit_log_reason
+    return evidence
+
+
+def assemble_insert_table_evidence(
+    *,
+    found_table: dict[str, Any] | None,
+    expected_rows: int,
+    expected_columns: int,
+    expected_first_row: list[str],
+    revision_before: str,
+    revision_after: str,
+    applied: bool,
+    audit_logged: bool,
+    audit_log_reason: str = "",
+) -> dict[str, Any]:
+    """Assemble evidence for insert_table.
+
+    Deliberately takes an already-extracted ``found_table`` rather than a raw
+    post-read body: walking a document body for the top-level table at a given
+    start index is table-structural work that belongs in tables.py, not here —
+    keeping verify.py free of deep table-walking also avoids a circular import
+    (tables.py imports this assembler from verify.py; verify.py must not import
+    back from tables.py).
+
+    ``found_table`` is ``None`` when no top-level table exists at the expected
+    location, or ``{"table_index": int, "rows": int, "columns": int,
+    "first_row": list[str]}`` as extracted by the caller (tables.py's
+    ``_find_table_at``).
+
+    Returns a dict with keys:
+        applied, table_index (-1 if not found), rows, columns, first_row,
+        table_confirmed (found AND dims match AND normalized first_row
+        matches expected_first_row), revision_before, revision_after,
+        audit_logged, audit_log_reason (only when non-empty)
+    """
+    if found_table is None:
+        table_index = -1
+        rows = 0
+        columns = 0
+        first_row: list[str] = []
+        confirmed = False
+    else:
+        table_index = found_table.get("table_index", -1)
+        rows = found_table.get("rows", 0)
+        columns = found_table.get("columns", 0)
+        first_row = found_table.get("first_row", [])
+        confirmed = (
+            rows == expected_rows
+            and columns == expected_columns
+            and [_normalize_cell_text(c) for c in first_row]
+            == [_normalize_cell_text(c) for c in expected_first_row]
+        )
+
+    evidence: dict[str, Any] = {
+        "applied": applied,
+        "table_index": table_index,
+        "rows": rows,
+        "columns": columns,
+        "first_row": first_row,
+        "table_confirmed": confirmed,
+        "revision_before": revision_before,
+        "revision_after": revision_after,
+        "audit_logged": audit_logged,
+    }
+    if audit_log_reason:
+        evidence["audit_log_reason"] = audit_log_reason
+    return evidence

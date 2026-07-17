@@ -13,6 +13,8 @@ src/verified_googledocs_mcp/
   suggestions.py     Extract pending suggested edits from document JSON
   markdown.py        Docs JSON -> markdown (read direction)
   markdown_writer.py markdown -> batchUpdate requests (write direction)
+  tables.py          Docs API: list/get tables, verified replace_table_row + insert_table
+  exports.py         Drive API: export_pdf (files.export -> local PDF, path-confined)
   verify.py          The kernel: locator, error envelope, audit writer
 ```
 
@@ -60,6 +62,7 @@ The evidence shape depends on the kind of mutation, but all run through the same
 - **Range/markdown** (`replace_*_markdown`, `append_markdown`): excerpts can't catch a dropped table elsewhere in the range, so verification re-exports the affected range to markdown and structurally diffs it against the input.
 - **Structural** (`insert_image`): post-read confirms an inline object now exists at the resolved anchor.
 - **Comment-state** (`resolve_comment`, `reply_to_comment`, `add_anchored_comment`): post-write re-query returns the comment's actual final state; a comment still open after a resolve is an error.
+- **Table** (`replace_table_row`, `insert_table`): post-read re-extracts the target row or table by index/position and compares it against what was requested — `cells_match` for a row replace, `table_confirmed` (dimensions + first row) for an insert. Both refuse merged cells and nested tables rather than risk a `deleteContentRange` that destroys structure it can't see. `export_pdf` is not a mutation (the document is never written to) but shares the same file-path confinement as `diff_tab_vs_file` and returns file facts — `bytes_written`, `sha256`, a best-effort `page_count` — instead of an evidence payload.
 
 ## Evidence is the confirmation — don't re-read after a write
 
