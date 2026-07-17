@@ -13,7 +13,7 @@ from fastmcp import Client
 
 from verified_googledocs_mcp.server import mcp
 
-# The 14 tools that make up the public surface. Updating this set is a
+# The 19 tools that make up the public surface. Updating this set is a
 # deliberate act: a rename, addition, or removal must be reflected here, which
 # is the point — the test fails loudly when the surface drifts unintentionally.
 EXPECTED_TOOLS = {
@@ -31,6 +31,11 @@ EXPECTED_TOOLS = {
     "reply_to_comment",
     "resolve_comment",
     "diff_tab_vs_file",
+    "list_tables",
+    "get_table",
+    "replace_table_row",
+    "insert_table",
+    "export_pdf",
 }
 
 

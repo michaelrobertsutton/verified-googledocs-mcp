@@ -42,7 +42,7 @@ Every one of these currently has a *procedural* mitigation: prompt instructions 
 - **Gmail, Calendar, and Sheets coverage.** Unused by the target workflows. Out of scope permanently; this is a Docs server.
 - **Accepting or rejecting suggested edits.** The Google Docs API does not support resolving suggestions programmatically. This server lists them (closing the visibility gap); acting on them remains a human step in the Docs UI. Documented as a known limitation, not a planned feature.
 - **Multi-user or hosted deployment.** Single user, local process, stdio transport. No HTTP transport, no shared auth.
-- **Document creation and formatting authoring** (tables, styles, page setup) beyond what markdown conversion requires. The workflows edit existing documents; they do not build documents from scratch.
+- **Document creation and formatting authoring** (tables, styles, page setup) beyond what markdown conversion requires (structured table reading/editing — `list_tables`, `get_table`, `replace_table_row`, `insert_table` — and PDF export via `export_pdf` were added post-v0.2 as verified tools, both narrow and evidence-backed; general formatting authoring — styles, page setup, arbitrary table creation from scratch beyond `insert_table`'s plain-text rows — remains out of scope). The workflows edit existing documents; they do not build documents from scratch.
 
 ## 5. Design principles
 
@@ -88,6 +88,18 @@ Fourteen tools replace the fourteen in active use. Names are working names.
 | Tool | Replaces | Notes |
 |---|---|---|
 | `diff_tab_vs_file(doc_id, tab_id, file_path)` | (new; currently done ad hoc by the agent) | Exports the tab as markdown and returns a structured diff against a local file. Server runs locally, so it reads the file directly |
+
+### Post-v0.2 additions
+
+Four table tools and a PDF exporter, added after the initial fourteen-tool surface shipped, each mapped to its incumbent-server equivalent:
+
+| Tool | Replaces | Evidence contract |
+|---|---|---|
+| `list_tables(doc_id, tab_id)` | `listDocumentTables` | Read-only; no `applied` key |
+| `get_table(doc_id, tab_id, table_index)` | `getTableStructure` / `getTable` | Read-only; no `applied` key |
+| `replace_table_row(doc_id, tab_id, table_index, row_index, cells, dry_run?)` | `replaceTableRowData` | Post-write re-read of the row; `cells_match` compares it against the requested cells |
+| `insert_table(doc_id, tab_id, anchor, rows, dry_run?)` | `insertTableWithData` | Post-write re-read confirms the table at the expected location; `table_confirmed` checks dimensions and first row |
+| `export_pdf(doc_id, output_path)` | `downloadFile` | Read/export tool; returns file facts (`bytes_written`, `sha256`, `page_count`) instead of an `applied` key |
 
 ### The verified-write contract
 

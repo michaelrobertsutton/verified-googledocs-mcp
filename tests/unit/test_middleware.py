@@ -43,6 +43,21 @@ class TestMutatingToolsRegistry:
     def test_read_document_not_in_registry(self) -> None:
         assert "read_document" not in MUTATING_TOOLS
 
+    def test_replace_table_row_in_registry(self) -> None:
+        assert "replace_table_row" in MUTATING_TOOLS
+
+    def test_insert_table_in_registry(self) -> None:
+        assert "insert_table" in MUTATING_TOOLS
+
+    def test_list_tables_not_in_registry(self) -> None:
+        assert "list_tables" not in MUTATING_TOOLS
+
+    def test_get_table_not_in_registry(self) -> None:
+        assert "get_table" not in MUTATING_TOOLS
+
+    def test_export_pdf_not_in_registry(self) -> None:
+        assert "export_pdf" not in MUTATING_TOOLS
+
 
 # ---------------------------------------------------------------------------
 # Middleware enforcement on a stub server

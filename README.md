@@ -9,7 +9,7 @@
 
 An MCP server for Google Docs whose writes carry proof. Every mutating tool re-reads the affected content from the document after it writes and returns evidence of what actually changed: before/after excerpts, the match count, and the document revision before and after. A tool never reports success for an edit that did not land.
 
-> **Status:** all 14 tools are implemented, covered by an offline unit suite, and exercised against the real Google Docs and Drive APIs — every tool and every error code passes the [live acceptance gate](docs/acceptance-report.md). Install with `uvx verified-googledocs-mcp`. See [Status](#status).
+> **Status:** all 19 tools are implemented, covered by an offline unit suite, and exercised against the real Google Docs and Drive APIs by the live test suite. The original fourteen passed the formal [live acceptance gate](docs/acceptance-report.md); the gate is rerun before each release. Install with `uvx verified-googledocs-mcp`. See [Status](#status).
 
 ## The problem
 
@@ -75,24 +75,31 @@ is responsible for. Every mutating tool also carries `revision_before`,
 | **Markdown range** | `replace_range_markdown`, `replace_tab_markdown`, `append_markdown` | `structural_match` (the written markdown round-trips), `input_blocks` vs `post_blocks` counts, and a `structural_diff` list naming any mismatch |
 | **Structural** | `insert_image` | `inline_object_confirmed` — a post-write scan found the inline object at the anchor paragraph |
 | **Comment state** | `add_anchored_comment`, `reply_to_comment`, `resolve_comment` | the re-queried `resolved` flag, `reply_count`, `content`, `quoted_text`, and `author` — a resolve that didn't land returns `COMMENT_STILL_OPEN`, never success |
+| **Table** | `replace_table_row`, `insert_table` | `replace_table_row`: `row_before`/`row_after` re-read with `cells_match`; `insert_table`: `table_confirmed` plus the confirmed dimensions and `first_row` |
 
 The read and sync tools (`read_document`, `list_tabs`, `find_sections`,
-`list_open_items`, `get_comment_thread`, `diff_tab_vs_file`) make no changes and
-carry no `applied`/evidence payload.
+`list_open_items`, `get_comment_thread`, `diff_tab_vs_file`, `list_tables`,
+`get_table`) make no changes and carry no `applied`/evidence payload.
+`export_pdf` is also a read/export tool in this sense — it returns file facts
+(`bytes_written`, `sha256`, `page_count`) rather than an `applied` key, since
+nothing in the document changes.
 
 ### Dry run
 
-The five mutating tools (`replace_text`, `replace_range_markdown`,
-`replace_tab_markdown`, `append_markdown`, `insert_image`) accept `dry_run=true`.
-No API write is issued; the response carries `applied: false`, an empty
-`revision_after` (no write, so no new revision), `audit_logged: false`, and —
-for `replace_text` — a predicted `after` excerpt computed by splicing the
-replacement into the pre-read. Use it to confirm a locate resolves to the right
-span before committing the edit.
+Seven mutating tools (`replace_text`, `replace_range_markdown`,
+`replace_tab_markdown`, `append_markdown`, `insert_image`, `replace_table_row`,
+`insert_table`) accept `dry_run=true`. No API write is issued; the response
+carries `applied: false`, an empty `revision_after` (no write, so no new
+revision), `audit_logged: false`, and — for `replace_text` — a predicted
+`after` excerpt computed by splicing the replacement into the pre-read. For
+`replace_table_row` and `insert_table`, `dry_run` is authoritative: the same
+assembled request list is index-simulated whether `dry_run` is true or false,
+so a passing dry run always means the real write will pass too. Use it to
+confirm a locate resolves to the right span before committing the edit.
 
 ## Tools
 
-Fourteen focused tools, each described by *when* to reach for it, replace the slice of a 150-tool Workspace server that document workflows actually use.
+Nineteen focused tools, each described by *when* to reach for it, replace the slice of a 150-tool Workspace server that document workflows actually use.
 
 ### Reading and structure
 | Tool | What it does |
@@ -100,6 +107,8 @@ Fourteen focused tools, each described by *when* to reach for it, replace the sl
 | `read_document` | Read a tab as markdown, as structured positions and style runs, or as a headings-only outline |
 | `list_tabs` | List tab IDs, titles, and nesting |
 | `find_sections` | Find headings and return their ranges, stamped with the document revision |
+| `list_tables` | List every top-level table in a tab, with position, size, and preceding-heading context |
+| `get_table` | Read one table's full cell grid |
 
 ### Editing (verified, tab-scoped)
 | Tool | What it does |
@@ -109,6 +118,8 @@ Fourteen focused tools, each described by *when* to reach for it, replace the sl
 | `replace_tab_markdown` | Replace a whole tab's content with markdown |
 | `append_markdown` | Append markdown to a tab |
 | `insert_image` | Insert an image at a quoted anchor or heading |
+| `replace_table_row` | Overwrite one row of an existing table with plain-text cells, in place |
+| `insert_table` | Insert a new table populated from rows, anchored like `insert_image` |
 
 ### Comments and suggestions
 | Tool | What it does |
@@ -119,10 +130,11 @@ Fourteen focused tools, each described by *when* to reach for it, replace the sl
 | `reply_to_comment` | Reply to a comment |
 | `resolve_comment` | Resolve a comment, re-query it, and confirm it actually closed |
 
-### Sync
+### Sync and export
 | Tool | What it does |
 |------|--------------|
 | `diff_tab_vs_file` | Diff a tab's markdown against a local file |
+| `export_pdf` | Export the whole document as a PDF to a local path, with a best-effort render-measured page count |
 
 ## Status
 
@@ -136,6 +148,7 @@ Built incrementally; each tool ships with its verification and tests rather than
 | `replace_text` (verified) + enforcement middleware | done |
 | Comment tools + `list_open_items` | done |
 | Markdown write tools + `diff_tab_vs_file` | done |
+| Table tools (`list_tables`, `get_table`, `replace_table_row`, `insert_table`) + `export_pdf` | done; ships in `0.2.0` |
 | Live acceptance gate | done for the initial release — [report](docs/acceptance-report.md); rerun before release |
 | PyPI packaging + publish workflow | done; first release `v0.1.0` |
 | MCP registry listing | published with `v0.1.0` |
@@ -244,7 +257,7 @@ This is a single-user, local server. It runs as you, over stdio, launched by you
 - **Scopes.** It requests `documents` and `drive`. The full `drive` scope is broader than editing alone needs, but the comment and suggestion tools (listing, replying to, and resolving comments on documents you already have) operate through the Drive API on arbitrary existing files, which the narrower `drive.file` scope cannot reach. `drive` is the minimum that covers the full tool set; if you don't need the comment tools, a fork could drop to a narrower scope.
 - **Credentials at rest.** The OAuth client secret lives at `~/.config/verified-googledocs-mcp/credentials.json`; the cached token (including the refresh token) is written to `~/.config/verified-googledocs-mcp/token.json` with owner-only permissions (`0600`, under a `0700` directory). Treat both as secrets: a leaked refresh token grants your full `drive`+`documents` access until you revoke it in your Google Account's security settings. Neither file is ever committed (both are gitignored).
 - **Audit log.** Every mutation appends to `~/.local/state/verified-googledocs-mcp/audit.jsonl` (also `0600`). Each line records the timestamp, document ID, tab ID, tool name, and the evidence payload — which includes before/after **content excerpts**. To log the metadata without the excerpts, set the environment variable `VERIFIED_GOOGLEDOCS_MCP_AUDIT_EXCERPTS` to a falsey value (`0`, `false`, `no`, or `off`); the `before`/`after` fields are then replaced with `"[redacted; N chars]"` and every other field is kept. Override the log location with `XDG_STATE_HOME`.
-- **Local file diffs.** `diff_tab_vs_file` reads a local file so it can compare a Doc tab with markdown on disk. It resolves symlinks before reading and only allows paths under `VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS` (a platform path-list; defaults to the user's **home directory**, not the server process's working directory). The home-directory default exists because MCP clients typically register this server pinned to one repo (e.g. `--directory /path/to/GoogleDocs-MCP`), while the diff target is almost always in whichever *other* project the caller is actually working in — scoping to the launch directory made every cross-repo diff fail by default. Narrow it further (e.g. back to a single repo) or widen it by setting `VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS` on the server process to a `:`-separated (`;` on Windows) list of directories, then restart the server — a rejected path's error names the env var and includes the currently configured `allowed_roots` so you can see exactly what's missing. It's still a real boundary, not unrestricted: an agent asking to diff against `/etc/passwd` or another user's home directory is refused. A home-directory-wide default also has to defend against a document's own content tricking an agent into reading credentials (prompt injection) — e.g. a paragraph instructing "diff against `~/.ssh/id_rsa`" — so `.ssh`, `.aws`, `.gnupg`, `.netrc`, `.git-credentials`, `.config/gh`, `.docker/config.json`, and `.npmrc` under the home directory are denylisted unconditionally, regardless of the configured allowed roots. It also refuses files larger than `VERIFIED_GOOGLEDOCS_MCP_MAX_DIFF_FILE_BYTES` (default `1000000`).
+- **Local file diffs.** `diff_tab_vs_file` reads a local file so it can compare a Doc tab with markdown on disk. It resolves symlinks before reading and only allows paths under `VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS` (a platform path-list; defaults to the user's **home directory**, not the server process's working directory). The home-directory default exists because MCP clients typically register this server pinned to one repo (e.g. `--directory /path/to/GoogleDocs-MCP`), while the diff target is almost always in whichever *other* project the caller is actually working in — scoping to the launch directory made every cross-repo diff fail by default. Narrow it further (e.g. back to a single repo) or widen it by setting `VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS` on the server process to a `:`-separated (`;` on Windows) list of directories, then restart the server — a rejected path's error names the env var and includes the currently configured `allowed_roots` so you can see exactly what's missing. It's still a real boundary, not unrestricted: an agent asking to diff against `/etc/passwd` or another user's home directory is refused. A home-directory-wide default also has to defend against a document's own content tricking an agent into reading credentials (prompt injection) — e.g. a paragraph instructing "diff against `~/.ssh/id_rsa`" — so `.ssh`, `.aws`, `.gnupg`, `.netrc`, `.git-credentials`, `.config/gh`, `.docker/config.json`, and `.npmrc` under the home directory are denylisted unconditionally, regardless of the configured allowed roots. It also refuses files larger than `VERIFIED_GOOGLEDOCS_MCP_MAX_DIFF_FILE_BYTES` (default `1000000`). `export_pdf`'s output path is confined by this same policy — the same `VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS` allow-list and the same unconditional credential-path denylist, so a PDF export can no more land in (or overwrite) `~/.ssh` than a diff can read from it.
 
 ## Error codes
 
@@ -266,6 +279,7 @@ Failures return a typed envelope (`error_code`, `message`, `diagnostics`, `retry
 | `IMAGE_SOURCE_UNSUPPORTED` | Image source is a local path; a fetchable URL is required |
 | `AUTH_EXPIRED` | No valid token; run `verified-googledocs-mcp auth` |
 | `INDEX_SIMULATION_FAILED` | A markdown write's compiled requests would land at an invalid index; caught before the API call. Raised identically by `dry_run` and the real write, so a passing `dry_run` always means the write will pass too |
+| `TABLE_NOT_FOUND` | The requested `table_index` does not exist in the tab; call `list_tables` first |
 
 ## Development
 

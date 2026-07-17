@@ -35,6 +35,7 @@ from .docs import (
     list_tabs_from,
     read_tab,
 )
+from .exports import execute_export_pdf
 from .middleware import EvidenceEnforcementMiddleware
 from .suggestions import extract_suggestions
 from .markdown_mutations import (
@@ -44,6 +45,12 @@ from .markdown_mutations import (
     execute_replace_range_markdown,
     execute_replace_tab_markdown,
 )
+from .tables import (
+    execute_get_table,
+    execute_insert_table,
+    execute_list_tables,
+    execute_replace_table_row,
+)
 from .verify import ErrorCode, VerifyError, _make_error
 
 mcp = FastMCP(
@@ -52,8 +59,10 @@ mcp = FastMCP(
         "MCP server for Google Docs with tab-scoped reads and verified writes. "
         "Every tool requires an explicit tab_id obtained from list_tabs. "
         "Call list_tabs first when you do not know the tab structure of a document. "
-        "Mutating tools (replace_text) re-read after every write and return "
-        "before/after evidence so writes cannot report false success."
+        "Mutating tools (replace_text, replace_table_row, insert_table, and the "
+        "markdown writers) re-read after every write and return before/after "
+        "evidence so writes cannot report false success. export_pdf is the "
+        "exception: it writes a local PDF file only and never modifies the document."
     ),
 )
 
@@ -709,6 +718,225 @@ def diff_tab_vs_file(
             doc_id=doc_id,
             tab_id=tab_id,
             file_path=file_path,
+        )
+    except VerifyError as exc:
+        _raise_tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool: list_tables
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def list_tables(doc_id: str, tab_id: str) -> dict[str, Any]:
+    """List every top-level table in a document tab.
+
+    Use this tool to discover and address the tables in a tab before calling
+    get_table or replace_table_row — both require a table_index, which this
+    tool assigns in document order.
+
+    Returns tables: a list of table_index, rows, columns, start_index,
+    end_index, preceding_heading (the nearest heading above the table, or
+    null if none), first_row, and has_merged_cells — plus doc_id, tab_id,
+    and revision_id.
+
+    Errors:
+      TAB_NOT_FOUND  – tab_id not in document
+      AUTH_EXPIRED   – no valid token
+    """
+    service = _get_service()
+    try:
+        return execute_list_tables(service=service, doc_id=doc_id, tab_id=tab_id)
+    except VerifyError as exc:
+        _raise_tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool: get_table
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def get_table(doc_id: str, tab_id: str, table_index: int) -> dict[str, Any]:
+    """Read one table's full cell grid.
+
+    Use this tool to read every cell of a specific table — identified by the
+    table_index returned from list_tables — before editing a row with
+    replace_table_row.
+
+    Returns doc_id, tab_id, revision_id, table_index, rows, columns, cells
+    (the row-major cell grid, list[list[str]]), and has_merged_cells.
+
+    Errors:
+      TAB_NOT_FOUND    – tab_id not in document
+      TABLE_NOT_FOUND  – table_index does not exist in the tab
+      AUTH_EXPIRED     – no valid token
+    """
+    service = _get_service()
+    try:
+        return execute_get_table(
+            service=service, doc_id=doc_id, tab_id=tab_id, table_index=table_index
+        )
+    except VerifyError as exc:
+        _raise_tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool: replace_table_row
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def replace_table_row(
+    doc_id: str,
+    tab_id: str,
+    table_index: int,
+    row_index: int,
+    cells: list[str],
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Replace every cell in one row of an existing table with plain text.
+
+    Use this tool — the workhorse for updating existing tables in place —
+    to overwrite one row's cells after locating the table and row with
+    list_tables and get_table. cells are PLAIN STRINGS, not markdown, and the
+    list length must equal the row's column count. Each cell's pre-existing
+    bold/italic/underline style is preserved on the replacement text. The
+    tool refuses tables that contain merged cells and rows where a cell
+    contains a nested table.
+
+    Set dry_run=true to preview without writing. dry_run is authoritative:
+    the same assembled request list is index-simulated whether dry_run is
+    true or false, so a passing dry_run always means the real write will
+    pass too.
+
+    Returns evidence: applied, table_index, row_index, row_before, row_after,
+    cells_match, revision_before, revision_after, audit_logged. In dry-run
+    mode row_after_preview and planned_requests replace row_after and
+    cells_match.
+
+    Errors:
+      TAB_NOT_FOUND            – tab_id not in document
+      TABLE_NOT_FOUND          – table_index does not exist in the tab
+      INVALID_INPUT            – merged cells, a nested table in a target
+                                  cell, a wrong cell count, or a bad row_index
+      REVISION_CONFLICT        – document changed mid-call; re-read and retry
+      VERIFICATION_FAILED      – post-write re-read does not match the
+                                  requested cells
+      INDEX_SIMULATION_FAILED  – compiled requests would land at an invalid
+                                  index; caught before the API call
+      AUTH_EXPIRED             – no valid token
+    """
+    service = _get_service()
+    try:
+        return execute_replace_table_row(
+            service=service,
+            doc_id=doc_id,
+            tab_id=tab_id,
+            table_index=table_index,
+            row_index=row_index,
+            cells=cells,
+            dry_run=dry_run,
+        )
+    except VerifyError as exc:
+        _raise_tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool: insert_table
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def insert_table(
+    doc_id: str,
+    tab_id: str,
+    anchor: str,
+    rows: list[list[str]],
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Create a new table populated from rows, inserted after an anchor.
+
+    Use this tool to add a brand-new table to a document tab. rows is a list
+    of rows of plain strings — no markdown, no bolding applied — with the
+    first row treated as the header positionally. anchor must be exact text
+    present in the tab; the table is inserted after the paragraph containing
+    it, the same anchoring insert_image uses.
+
+    Set dry_run=true to preview without writing. dry_run is authoritative:
+    the same assembled request list is index-simulated whether dry_run is
+    true or false, so a passing dry_run always means the real write will
+    pass too.
+
+    Returns evidence: applied, table_index (use it for follow-up
+    replace_table_row calls), rows, columns, first_row, table_confirmed,
+    revision_before, revision_after, audit_logged.
+
+    Errors:
+      TAB_NOT_FOUND            – tab_id not in document
+      QUOTE_NOT_FOUND          – anchor not found; nearest candidates listed
+      INVALID_INPUT            – empty or ragged rows, a non-string cell, or
+                                  an anchor that falls inside a table
+      REVISION_CONFLICT        – document changed mid-call; re-read and retry
+      VERIFICATION_FAILED      – post-write re-read did not confirm the
+                                  inserted table at the expected location
+      INDEX_SIMULATION_FAILED  – compiled requests would land at an invalid
+                                  index; caught before the API call
+      AUTH_EXPIRED             – no valid token
+    """
+    service = _get_service()
+    try:
+        return execute_insert_table(
+            service=service,
+            doc_id=doc_id,
+            tab_id=tab_id,
+            anchor=anchor,
+            rows=rows,
+            dry_run=dry_run,
+        )
+    except VerifyError as exc:
+        _raise_tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool: export_pdf
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def export_pdf(doc_id: str, output_path: str) -> dict[str, Any]:
+    """Export the whole document as a PDF to a local path.
+
+    Use this tool when a caller needs a render-measured page count to check
+    against a page limit, or simply needs a PDF copy on disk. Drive's export
+    is doc-level, not tab-scoped, so this exports every tab in the document,
+    not just one.
+
+    output_path must fall inside VERIFIED_GOOGLEDOCS_MCP_ALLOWED_FILE_ROOTS
+    (defaults to the user's home directory) and must never resolve to a
+    credential path; its parent directory must already exist. page_count is
+    best-effort and is None when the PDF hides its page markers inside a
+    compressed stream — never a guessed number. Drive refuses exports whose
+    PDF would exceed roughly 10 MB.
+
+    This is a read/export tool: nothing in the document changes, so the
+    return value has no "applied" key. Returns doc_id, output_path,
+    bytes_written, sha256, page_count, existed_before, audit_logged.
+
+    Errors:
+      INVALID_INPUT  – a bad output_path (missing parent directory, outside
+                        the allowed roots, a denylisted credential path, or
+                        an existing target that isn't a regular file), or
+                        Drive refused the export (not found, permission
+                        denied, or the size limit)
+      AUTH_EXPIRED   – no valid token
+    """
+    credentials = _get_credentials()
+    drive_service = build_drive_service(credentials)
+    try:
+        return execute_export_pdf(
+            drive_service=drive_service, doc_id=doc_id, output_path=output_path
         )
     except VerifyError as exc:
         _raise_tool_error(exc)

@@ -35,6 +35,8 @@ MUTATING_TOOLS: frozenset[str] = frozenset(
         "replace_tab_markdown",
         "append_markdown",
         "insert_image",
+        "replace_table_row",
+        "insert_table",
     }
 )
 
