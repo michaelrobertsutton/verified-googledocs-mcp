@@ -296,7 +296,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the module map and the ve
 
 ## Limitations
 
-- **Accepting or rejecting suggested edits** is not possible through the Google Docs API. This server makes suggestions *visible* alongside comments; acting on them stays a manual step in the Docs UI.
+- **Accepting or rejecting suggested edits** is not possible through the generally-available Google Docs API. This server makes suggestions *visible* alongside comments; acting on them stays a manual step in the Docs UI. As of July 2026 Google documents [accept/reject/delete suggestion requests](https://developers.google.com/workspace/docs/api/how-tos/suggestions) — but only under the Workspace Developer Preview Program; the stable v1 surface rejects them (verified 2026-07-17). Verified `accept_suggestion`/`reject_suggestion` tools become buildable when that reaches GA.
 - **Single user, local.** stdio transport, one cached token, no hosted or multi-user mode.
 - **Docs only.** Gmail, Calendar, and Sheets are out of scope by design.
 - **Markdown is a fixed subset** (headings, bold/italic, lists, tables, links). Anything outside it is rejected with a clear error rather than approximated.
