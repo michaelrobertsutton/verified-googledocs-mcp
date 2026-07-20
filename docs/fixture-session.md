@@ -9,6 +9,12 @@ Prerequisite: the Google Cloud + OAuth setup (repo issue #7). Then `verified-goo
 
 ## 1. Seed the scratch document
 
+> **Automated:** `uv run python scripts/seed_live_fixture.py` creates the doc
+> and seeds everything below except the pending suggested edits (the stable
+> API cannot create suggestions — Docs UI Suggesting mode only). It prints the
+> new ids to copy into `tests/live/conftest.py` and
+> `tests/live/test_comments.py`.
+
 Create one Google Doc with **multiple tabs** and seed it with the historical
 failure cases so a single fixture exercises them all:
 
