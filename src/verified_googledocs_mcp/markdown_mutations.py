@@ -30,6 +30,7 @@ from .index_sim import IndexSimulationError, compiled_requests_growth, simulate_
 from .markdown import to_markdown
 from .markdown_writer import UnsupportedMarkdown, compile_markdown
 from .mutations import _translate_http_error
+from .suggestions import assert_no_pending_suggestions
 from .verify import (
     ErrorCode,
     LocateResult,
@@ -156,10 +157,27 @@ def _raise_post_write_verification_failure(
     tool: str,
     message: str,
     evidence: dict[str, Any],
+    extra_diagnostics: dict[str, Any] | None = None,
 ) -> None:
-    """Audit post-write verification evidence, then raise a typed failure."""
+    """Audit post-write verification evidence, then raise a typed failure.
+
+    Every call site reaches this only after a batchUpdate was already sent and
+    accepted by the API — dry_run and pre-write validation failures never get
+    here — so this is never a no-op write, even though the caller is told
+    verification "failed". Flags the envelope with document_mutated /
+    needs_manual_restore whenever revision_after differs from revision_before,
+    since applied=False alone was misleading: the document WAS mutated, just
+    not confirmed to match what the caller asked for (issue #56). There is no
+    rollback here — a caller that sees document_mutated=True must restore from
+    Docs version history if the mutation is unwanted.
+    """
     evidence["applied"] = False
     evidence["verification_failed"] = True
+    revision_before = evidence.get("revision_before")
+    revision_after = evidence.get("revision_after")
+    if revision_before and revision_after and revision_before != revision_after:
+        evidence["document_mutated"] = True
+        evidence["needs_manual_restore"] = True
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
         tab=tab_id,
@@ -169,10 +187,13 @@ def _raise_post_write_verification_failure(
     evidence["audit_logged"] = audit_ok
     if not audit_ok:
         evidence["audit_log_reason"] = audit_reason
+    diagnostics: dict[str, Any] = {"evidence": evidence}
+    if extra_diagnostics:
+        diagnostics.update(extra_diagnostics)
     raise _make_error(
         ErrorCode.VERIFICATION_FAILED,
         message,
-        {"evidence": evidence},
+        diagnostics,
     )
 
 
@@ -356,6 +377,38 @@ def execute_replace_range_markdown(
             {"available_tabs": available},
         )
 
+    # --- Suggestion guard (issue #56) -----------------------------------
+    assert_no_pending_suggestions(
+        service=service, doc_id=doc_id, tab_id=tab_id, expected_revision=revision_before
+    )
+
+    # --- Range-vs-tab-extent sanity check (issue #56) -------------------
+    # computed_at_revision (checked above) ties the range to a document
+    # revision but not to a tab: a range computed against a DIFFERENT tab can
+    # carry numerically-valid-looking start/end indices that don't correspond
+    # to anything sensible in THIS tab's body. Bounds-check against the
+    # current tab's extent to catch the unambiguous cases (out of range,
+    # empty/inverted range); a stale-but-in-bounds range against the same tab
+    # is a narrower residual risk this check cannot close.
+    tab_start, tab_end = _tab_extent(body)
+    if start_index < tab_start or end_index > tab_end or start_index >= end_index:
+        raise _make_error(
+            ErrorCode.INVALID_RANGE,
+            (
+                f"Range [{start_index}, {end_index}) is not valid for tab {tab_id!r} "
+                f"(current extent is [{tab_start}, {tab_end})). The range may have been "
+                "computed against a different tab or a stale document state. Re-run "
+                "find_sections to get a fresh range."
+            ),
+            {
+                "start_index": start_index,
+                "end_index": end_index,
+                "tab_start": tab_start,
+                "tab_end": tab_end,
+                "tab_id": tab_id,
+            },
+        )
+
     # --- Compile markdown ----------------------------------------------------
     try:
         compiled_requests = compile_markdown(markdown, start_index=start_index)
@@ -413,7 +466,7 @@ def execute_replace_range_markdown(
     # --- Index-bounds simulation (makes dry_run authoritative) ---------------
     # Runs on the exact assembled list that would be sent, so dry_run and the
     # real write can never disagree about whether it's index-valid.
-    tab_start, tab_end = _tab_extent(body)
+    # (tab_start/tab_end already computed above for the range-vs-extent check.)
     _simulate_or_raise(requests, tab_start=tab_start, tab_end=tab_end)
 
     # --- Dry run -------------------------------------------------------------
@@ -545,6 +598,11 @@ def execute_replace_tab_markdown(
             f"Tab {tab_id!r} not found in document {doc_id!r}.",
             {"available_tabs": available},
         )
+
+    # --- Suggestion guard (issue #56) -----------------------------------
+    assert_no_pending_suggestions(
+        service=service, doc_id=doc_id, tab_id=tab_id, expected_revision=revision_before
+    )
 
     tab_start, tab_end = _tab_extent(body)
 
@@ -701,6 +759,11 @@ def execute_append_markdown(
             {"available_tabs": available},
         )
 
+    # --- Suggestion guard (issue #56) -----------------------------------
+    assert_no_pending_suggestions(
+        service=service, doc_id=doc_id, tab_id=tab_id, expected_revision=revision_before
+    )
+
     tab_start, tab_end = _tab_extent(body)
     # Append inserts before the final newline to avoid the trailing-newline constraint.
     insert_at = max(1, tab_end - 1)
@@ -842,6 +905,11 @@ def execute_insert_image(
             {"available_tabs": available},
         )
 
+    # --- Suggestion guard (issue #56) -----------------------------------
+    assert_no_pending_suggestions(
+        service=service, doc_id=doc_id, tab_id=tab_id, expected_revision=revision_before
+    )
+
     tab_json = {"body": body}
 
     # --- Locate anchor -------------------------------------------------------
@@ -864,8 +932,13 @@ def execute_insert_image(
             },
         ) from exc
 
-    # Find the paragraph end index for the anchor span.
+    # Refuse an anchor inside a table: locate() recurses into table cells, but
+    # _find_paragraph_end only scans top-level body paragraphs and would
+    # silently fall back to a nonsensical index (issue #56).
     anchor_api_start = locate_result.spans[0][0]
+    _assert_anchor_not_in_table(body, anchor_api_start)
+
+    # Find the paragraph end index for the anchor span.
     anchor_para_end = _find_paragraph_end(body, anchor_api_start)
     insert_at = anchor_para_end
 
@@ -1207,6 +1280,34 @@ def _find_paragraph_end(body: dict[str, Any], api_index: int) -> int:
         if start <= api_index < end:
             return end
     return api_index + 1
+
+
+def _assert_anchor_not_in_table(body: dict[str, Any], span_start: int) -> None:
+    """Raise INVALID_INPUT if span_start falls inside a top-level table element.
+
+    A table's own [startIndex, endIndex) spans every cell's nested content, so
+    this single top-level check also catches an anchor nested inside a cell —
+    no recursion into cell content is needed.
+
+    Shared by insert_table (tables.py) and insert_image: both locate an anchor
+    via locate() (which recurses into table cells and can match anchor text
+    inside a cell) and then compute an insertion point via _find_paragraph_end,
+    which only scans top-level body paragraphs and silently falls back to
+    api_index + 1 for an index it doesn't recognize — an anchor inside a table
+    would otherwise land at a nonsensical, uncomputed index instead of being
+    refused outright (issue #56).
+    """
+    for elem in body.get("content", []):
+        start = elem.get("startIndex", 0)
+        end = elem.get("endIndex", 0)
+        if start <= span_start < end:
+            if "table" in elem:
+                raise _make_error(
+                    ErrorCode.INVALID_INPUT,
+                    "anchor is inside a table; anchor must be body text",
+                    {"anchor_span_start": span_start, "element_start": start, "element_end": end},
+                )
+            return
 
 
 def _validate_image_source(source: str) -> None:

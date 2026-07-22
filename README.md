@@ -92,10 +92,21 @@ Seven mutating tools (`replace_text`, `replace_range_markdown`,
 carries `applied: false`, an empty `revision_after` (no write, so no new
 revision), `audit_logged: false`, and — for `replace_text` — a predicted
 `after` excerpt computed by splicing the replacement into the pre-read. For
-`replace_table_row` and `insert_table`, `dry_run` is authoritative: the same
-assembled request list is index-simulated whether `dry_run` is true or false,
-so a passing dry run always means the real write will pass too. Use it to
-confirm a locate resolves to the right span before committing the edit.
+`replace_table_row` and `insert_table`, `dry_run` is authoritative for index
+validity: the same assembled request list is index-simulated whether
+`dry_run` is true or false, so a passing dry run always means the real write
+will pass too. Use it to confirm a locate resolves to the right span before
+committing the edit.
+
+**All seven require a suggestion-free target tab.** Every mutating tool
+computes its write indices against a `suggestionsViewMode=PREVIEW_WITHOUT_SUGGESTIONS`
+read, but the actual write always lands in the document's real index space,
+which includes pending suggestions. If the target tab has a pending
+suggested insertion or deletion, those two index spaces diverge and a write
+would land at the wrong offset — so every mutating tool refuses with
+`SUGGESTIONS_PRESENT` instead (both in `dry_run` and live), rather than
+risking a silent, wrong-offset write (issue #56). Accept or reject the
+pending suggestion in the Docs UI first, then retry.
 
 ## Tools
 
@@ -280,6 +291,9 @@ Failures return a typed envelope (`error_code`, `message`, `diagnostics`, `retry
 | `AUTH_EXPIRED` | No valid token; run `verified-googledocs-mcp auth` |
 | `INDEX_SIMULATION_FAILED` | A markdown write's compiled requests would land at an invalid index; caught before the API call. Raised identically by `dry_run` and the real write, so a passing `dry_run` always means the write will pass too |
 | `TABLE_NOT_FOUND` | The requested `table_index` does not exist in the tab; call `list_tables` first |
+| `SUGGESTIONS_PRESENT` | The target tab has pending suggested insertions/deletions; a write refuses rather than computing indices against the wrong index space (issue #56) — accept or reject the suggestions first, then retry |
+| `INVALID_RANGE` | A caller-supplied range doesn't fit the tab's current extent, or the Docs API itself rejected the write as index/range-invalid (the verbatim API message is included) |
+| `INDEX_MODEL_DIVERGENCE` | A text run's computed UTF-16 length disagrees with the Docs API's reported `endIndex`; offsets from that read cannot be trusted |
 
 ## Development
 

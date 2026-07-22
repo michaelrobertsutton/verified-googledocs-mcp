@@ -9,6 +9,7 @@ with different revisionIds.
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -17,6 +18,22 @@ import pytest
 from fastmcp import Client
 
 from verified_googledocs_mcp.server import mcp
+
+
+@contextmanager
+def _patch_fetch_and_guard(fake_fetch: Any):  # type: ignore[no-untyped-def]
+    """Combine the mutations.fetch_document patch with a no-op suggestion guard.
+
+    A single context manager so it can slot into every existing
+    ``with p1, p2, p3, p4:`` call site unchanged (see _mock_replace).
+    """
+    with (
+        patch("verified_googledocs_mcp.mutations.fetch_document", fake_fetch),
+        patch(
+            "verified_googledocs_mcp.mutations.assert_no_pending_suggestions", lambda **kwargs: None
+        ),
+    ):
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +137,14 @@ def _mock_replace(pre_doc: dict[str, Any], post_doc: dict[str, Any]):
     p1 = patch("verified_googledocs_mcp.server.get_credentials", _fake_get_credentials)
     p2 = patch("verified_googledocs_mcp.server.build_docs_service", _fake_build_service)
     p3 = patch("verified_googledocs_mcp.server.fetch_document", _fake_fetch)
-    p4 = patch("verified_googledocs_mcp.mutations.fetch_document", _fake_fetch)
+    # p4 bundles the fetch_document patch with a no-op for the issue #56
+    # suggestion guard (stubbed out here since these tests exercise replace_text
+    # pipeline logic, not suggestion detection, covered separately) into a
+    # single context manager, so every existing `with p1, p2, p3, p4:` call
+    # site keeps working unchanged. Without the guard stub, its own
+    # SUGGESTIONS_INLINE get() would consume an extra slot from
+    # fetch_side_effects / hit the unconfigured mock_service.
+    p4 = _patch_fetch_and_guard(_fake_fetch)
     return p1, p2, p3, p4, mock_service
 
 
@@ -478,7 +502,7 @@ class TestReplaceTextErrors:
         p1 = patch("verified_googledocs_mcp.server.get_credentials", _fake_get_credentials)
         p2 = patch("verified_googledocs_mcp.server.build_docs_service", _fake_build_service)
         p3 = patch("verified_googledocs_mcp.server.fetch_document", _fake_fetch)
-        p4 = patch("verified_googledocs_mcp.mutations.fetch_document", _fake_fetch)
+        p4 = _patch_fetch_and_guard(_fake_fetch)
 
         with p1, p2, p3, p4:
             async with Client(mcp) as client:

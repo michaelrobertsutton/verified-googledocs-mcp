@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from .docs import _available_tab_ids, _find_tab_body, fetch_document
+from .suggestions import assert_no_pending_suggestions
 from .verify import (
     ErrorCode,
     LocateResult,
@@ -70,7 +71,21 @@ def _translate_http_error(exc: Exception, doc_id: str) -> Exception:
     """Translate a googleapiclient HttpError to a VerifyError when appropriate.
 
     A 409 or a 400 whose message mentions "revision" signals a concurrent edit
-    (requiredRevisionId rejected).  All other HTTP errors propagate as-is.
+    (requiredRevisionId rejected) -> REVISION_CONFLICT (retryable).
+
+    Any OTHER 400 means the Docs API itself rejected the assembled batchUpdate
+    request as index/range-invalid — e.g. "Invalid deletion range", "the
+    insertion index must be inside the bounds of an existing paragraph", or
+    "index ... must be less than the end index". Previously these escaped
+    uncaught as a raw HttpError instead of the typed envelope every other
+    failure mode returns (issue #56); every 400 that isn't a revision conflict
+    is now wrapped as INVALID_RANGE (non-retryable — the request itself is
+    malformed, retrying it unchanged would just fail again), with the
+    verbatim API message preserved in diagnostics. This module only ever
+    sends batchUpdate requests it assembled itself, so a 400 here always
+    means an index/range problem, not e.g. a malformed-JSON class of error.
+
+    All other HTTP statuses (401/403/5xx/etc.) propagate as-is.
     """
     try:
         from googleapiclient.errors import HttpError  # type: ignore[import-untyped]
@@ -86,6 +101,12 @@ def _translate_http_error(exc: Exception, doc_id: str) -> Exception:
         return _make_error(
             ErrorCode.REVISION_CONFLICT,
             f"Document {doc_id!r} was modified concurrently; re-read and retry.",
+            {"http_status": status, "api_message": str(exc)},
+        )
+    if status == 400:
+        return _make_error(
+            ErrorCode.INVALID_RANGE,
+            f"Document {doc_id!r} rejected the write as index/range-invalid: {exc}",
             {"http_status": status, "api_message": str(exc)},
         )
     return exc
@@ -130,6 +151,12 @@ def execute_replace_text(
             f"Tab {tab_id!r} not found in document {doc_id!r}.",
             {"available_tabs": available},
         )
+
+    # --- Suggestion guard (issue #56) -----------------------------------
+    assert_no_pending_suggestions(
+        service=service, doc_id=doc_id, tab_id=tab_id, expected_revision=revision_before
+    )
+
     pre_tab_json = {"body": body}
 
     # --- Locate ------------------------------------------------------------

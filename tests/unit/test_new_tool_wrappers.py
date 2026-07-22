@@ -77,6 +77,14 @@ def _build_table_mock_env(*docs: dict[str, Any]):
         patch("verified_googledocs_mcp.server.get_credentials", _fake_get_creds),
         patch("verified_googledocs_mcp.server.build_docs_service", _fake_build_docs_service),
         patch("verified_googledocs_mcp.tables.fetch_document", _fake_fetch),
+        # Issue #56 suggestion guard: stubbed out here since these tests exercise
+        # the wrapper layer, not suggestion detection (covered separately).
+        # Without this, the guard's own SUGGESTIONS_INLINE get() would hit the
+        # unconfigured mock_service and return a non-dict, non-JSON-serializable
+        # MagicMock.
+        patch(
+            "verified_googledocs_mcp.tables.assert_no_pending_suggestions", lambda **kwargs: None
+        ),
     ]
     return patchers, mock_service
 

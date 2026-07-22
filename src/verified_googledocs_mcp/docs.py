@@ -365,6 +365,16 @@ def fetch_document(service: Any, doc_id: str) -> dict[str, Any]:
     sentences so the locator sees a single match, silently defeating replace_text's
     match-count guard (issue #28). list_open_items deliberately uses a separate
     SUGGESTIONS_INLINE get because it must see suggestions; this read must not.
+
+    This PREVIEW/INLINE split is also the root cause of issue #56: every
+    mutation pipeline computes its write indices against THIS (PREVIEW) read,
+    but batchUpdate always mutates the document's real index space, which is
+    SUGGESTIONS_INLINE. If the target tab has a pending suggested
+    insertion/deletion, those two index spaces diverge and a write computed
+    here would land at the wrong offset. Every mutating tool therefore calls
+    suggestions.assert_no_pending_suggestions before building any write
+    request, refusing with SUGGESTIONS_PRESENT rather than risking that
+    divergence — so a verified write requires a suggestion-free target tab.
     """
     return (
         service.documents()
@@ -372,6 +382,29 @@ def fetch_document(service: Any, doc_id: str) -> dict[str, Any]:
             documentId=doc_id,
             includeTabsContent=True,
             suggestionsViewMode="PREVIEW_WITHOUT_SUGGESTIONS",
+        )
+        .execute(num_retries=3)
+    )
+
+
+def fetch_document_inline(service: Any, doc_id: str) -> dict[str, Any]:
+    """Fetch a document with suggestionsViewMode=SUGGESTIONS_INLINE.
+
+    This is the index space every ``batchUpdate`` actually mutates (see
+    ``fetch_document``'s docstring for why every mutation pipeline instead
+    reads with PREVIEW_WITHOUT_SUGGESTIONS). Used by
+    ``suggestions.assert_no_pending_suggestions`` — the pre-write guard that
+    refuses a write when the target tab has pending index-affecting
+    suggestions, since PREVIEW-computed indices are provably wrong against
+    this index space in that case (issue #56) — and by ``list_open_items``,
+    which must see suggestions to report them.
+    """
+    return (
+        service.documents()
+        .get(
+            documentId=doc_id,
+            includeTabsContent=True,
+            suggestionsViewMode="SUGGESTIONS_INLINE",
         )
         .execute(num_retries=3)
     )

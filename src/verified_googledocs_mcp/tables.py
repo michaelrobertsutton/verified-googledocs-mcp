@@ -25,6 +25,7 @@ from typing import Any
 
 from .docs import _available_tab_ids, _find_tab_body, fetch_document
 from .markdown_mutations import (
+    _assert_anchor_not_in_table,
     _find_paragraph_end,
     _raise_post_write_verification_failure,
     _simulate_or_raise,
@@ -33,6 +34,7 @@ from .markdown_mutations import (
 )
 from .markdown_writer import _table_cell_index, _utf16_len
 from .mutations import _translate_http_error
+from .suggestions import assert_no_pending_suggestions
 from .verify import (
     ErrorCode,
     VerifyError,
@@ -151,26 +153,6 @@ def _find_table_at(body: dict[str, Any], start_index: int) -> dict[str, Any] | N
                 "first_row": first_row,
             }
     return None
-
-
-def _assert_anchor_not_in_table(body: dict[str, Any], span_start: int) -> None:
-    """Raise INVALID_INPUT if span_start falls inside a top-level table element.
-
-    A table's own [startIndex, endIndex) spans every cell's nested content, so
-    this single top-level check also catches an anchor nested inside a cell —
-    no recursion into cell content is needed.
-    """
-    for elem in body.get("content", []):
-        start = elem.get("startIndex", 0)
-        end = elem.get("endIndex", 0)
-        if start <= span_start < end:
-            if "table" in elem:
-                raise _make_error(
-                    ErrorCode.INVALID_INPUT,
-                    "anchor is inside a table; anchor must be body text",
-                    {"anchor_span_start": span_start, "element_start": start, "element_end": end},
-                )
-            return
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +275,11 @@ def execute_replace_table_row(
             f"Tab {tab_id!r} not found in document {doc_id!r}.",
             {"available_tabs": available},
         )
+
+    # --- Suggestion guard (issue #56) -----------------------------------
+    assert_no_pending_suggestions(
+        service=service, doc_id=doc_id, tab_id=tab_id, expected_revision=revision_before
+    )
 
     # --- Table lookup ------------------------------------------------------
     tables = _top_level_tables(body)
@@ -478,17 +465,13 @@ def execute_replace_table_row(
         audit_logged=True,
     )
     if not evidence["cells_match"]:
-        evidence["applied"] = False
-        audit_ok, audit_reason = append_audit(
-            doc=doc_id, tab=tab_id, tool="replace_table_row", evidence=evidence
-        )
-        evidence["audit_logged"] = audit_ok
-        if not audit_ok:
-            evidence["audit_log_reason"] = audit_reason
-        raise _make_error(
-            ErrorCode.VERIFICATION_FAILED,
-            "Post-write verification failed: written row does not match requested cells.",
-            {"row_after": row_after, "requested_cells": cells, "evidence": evidence},
+        _raise_post_write_verification_failure(
+            doc_id=doc_id,
+            tab_id=tab_id,
+            tool="replace_table_row",
+            message="Post-write verification failed: written row does not match requested cells.",
+            evidence=evidence,
+            extra_diagnostics={"row_after": row_after, "requested_cells": cells},
         )
 
     audit_ok, audit_reason = append_audit(
@@ -529,6 +512,11 @@ def execute_insert_table(
             f"Tab {tab_id!r} not found in document {doc_id!r}.",
             {"available_tabs": available},
         )
+
+    # --- Suggestion guard (issue #56) -----------------------------------
+    assert_no_pending_suggestions(
+        service=service, doc_id=doc_id, tab_id=tab_id, expected_revision=revision_before
+    )
 
     # --- Validate rows -----------------------------------------------------
     row_lengths = [len(r) for r in rows]
@@ -642,21 +630,16 @@ def execute_insert_table(
         audit_logged=True,
     )
     if not evidence["table_confirmed"]:
-        evidence["applied"] = False
-        audit_ok, audit_reason = append_audit(
-            doc=doc_id, tab=tab_id, tool="insert_table", evidence=evidence
-        )
-        evidence["audit_logged"] = audit_ok
-        if not audit_ok:
-            evidence["audit_log_reason"] = audit_reason
-        raise _make_error(
-            ErrorCode.VERIFICATION_FAILED,
-            "Post-write verification failed: inserted table not confirmed at the expected location.",
-            {
+        _raise_post_write_verification_failure(
+            doc_id=doc_id,
+            tab_id=tab_id,
+            tool="insert_table",
+            message="Post-write verification failed: inserted table not confirmed at the expected location.",
+            evidence=evidence,
+            extra_diagnostics={
                 "expected_table_start": table_start,
                 "expected_rows": n_rows,
                 "expected_columns": n_cols,
-                "evidence": evidence,
             },
         )
 

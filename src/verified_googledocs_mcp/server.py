@@ -31,6 +31,7 @@ from .docs import (
     _available_tab_ids,
     build_docs_service,
     fetch_document,
+    fetch_document_inline,
     find_sections_in,
     list_tabs_from,
     read_tab,
@@ -242,6 +243,10 @@ def replace_text(
       STRUCTURAL_BOUNDARY – match crosses a paragraph boundary
       INVALID_INPUT       – empty find, or find equals replace
       TAB_NOT_FOUND       – tab_id not in document; available tabs listed
+      SUGGESTIONS_PRESENT – tab has pending suggested edits; accept/reject
+                            them in the Docs UI first, then retry (a pending
+                            suggestion makes the write's computed indices
+                            unsafe — see verified writes, below)
     """
     from .mutations import execute_replace_text
 
@@ -311,11 +316,7 @@ def list_open_items(
     open_comments = list_comments(drive_service, doc_id)
 
     # Suggestions: per-tab from Docs JSON with SUGGESTIONS_INLINE.
-    doc = (
-        docs_service.documents()
-        .get(documentId=doc_id, includeTabsContent=True, suggestionsViewMode="SUGGESTIONS_INLINE")
-        .execute(num_retries=3)
-    )
+    doc = fetch_document_inline(docs_service, doc_id)
 
     if tab_id:
         try:
@@ -519,8 +520,13 @@ def replace_range_markdown(
       STALE_RANGE          – range stamp is outdated; re-run find_sections
       UNSUPPORTED_MARKDOWN – markdown contains an unsupported construct
       INVALID_INPUT        – structural guardrail refused or blast-radius violation
+      INVALID_RANGE        – start_index/end_index don't fit the tab's current
+                            extent, or the Docs API rejected the write as
+                            index-invalid
       TAB_NOT_FOUND        – tab_id not in document
       REVISION_CONFLICT    – document changed mid-call; re-read and retry
+      SUGGESTIONS_PRESENT  – tab has pending suggested edits; accept/reject
+                            them in the Docs UI first, then retry
     """
     service = _get_service()
     try:
@@ -573,6 +579,8 @@ def replace_tab_markdown(
       INVALID_INPUT        – structural guardrail refused
       TAB_NOT_FOUND        – tab_id missing or not in document
       REVISION_CONFLICT    – document changed mid-call; re-read and retry
+      SUGGESTIONS_PRESENT  – tab has pending suggested edits; accept/reject
+                            them in the Docs UI first, then retry
     """
     service = _get_service()
     try:
@@ -665,8 +673,11 @@ def insert_image(
     Errors:
       QUOTE_NOT_FOUND          – anchor not found; nearest candidates listed
       IMAGE_SOURCE_UNSUPPORTED – source is a local path, not a URL
+      INVALID_INPUT            – anchor is inside a table (anchor must be body text)
       TAB_NOT_FOUND            – tab_id not in document
       REVISION_CONFLICT        – document changed mid-call; re-read and retry
+      SUGGESTIONS_PRESENT      – tab has pending suggested edits; accept/reject
+                                 them in the Docs UI first, then retry
     """
     service = _get_service()
     try:
@@ -806,10 +817,12 @@ def replace_table_row(
     tool refuses tables that contain merged cells and rows where a cell
     contains a nested table.
 
-    Set dry_run=true to preview without writing. dry_run is authoritative:
-    the same assembled request list is index-simulated whether dry_run is
-    true or false, so a passing dry_run always means the real write will
-    pass too.
+    Set dry_run=true to preview without writing. dry_run is authoritative for
+    index validity: the same assembled request list is index-simulated
+    whether dry_run is true or false, and the suggestion guard below runs
+    identically on both paths, so a passing dry_run means the real write will
+    pass too — provided nothing about the document changes in between (a new
+    suggestion, a concurrent edit) before the real write is issued.
 
     Returns evidence: applied, table_index, row_index, row_before, row_after,
     cells_match, revision_before, revision_after, audit_logged. In dry-run
@@ -822,6 +835,8 @@ def replace_table_row(
       INVALID_INPUT            – merged cells, a nested table in a target
                                   cell, a wrong cell count, or a bad row_index
       REVISION_CONFLICT        – document changed mid-call; re-read and retry
+      SUGGESTIONS_PRESENT      – tab has pending suggested edits; accept/reject
+                                 them in the Docs UI first, then retry
       VERIFICATION_FAILED      – post-write re-read does not match the
                                   requested cells
       INDEX_SIMULATION_FAILED  – compiled requests would land at an invalid
@@ -864,10 +879,12 @@ def insert_table(
     present in the tab; the table is inserted after the paragraph containing
     it, the same anchoring insert_image uses.
 
-    Set dry_run=true to preview without writing. dry_run is authoritative:
-    the same assembled request list is index-simulated whether dry_run is
-    true or false, so a passing dry_run always means the real write will
-    pass too.
+    Set dry_run=true to preview without writing. dry_run is authoritative for
+    index validity: the same assembled request list is index-simulated
+    whether dry_run is true or false, and the suggestion guard below runs
+    identically on both paths, so a passing dry_run means the real write will
+    pass too — provided nothing about the document changes in between (a new
+    suggestion, a concurrent edit) before the real write is issued.
 
     Returns evidence: applied, table_index (use it for follow-up
     replace_table_row calls), rows, columns, first_row, table_confirmed,
@@ -879,6 +896,8 @@ def insert_table(
       INVALID_INPUT            – empty or ragged rows, a non-string cell, or
                                   an anchor that falls inside a table
       REVISION_CONFLICT        – document changed mid-call; re-read and retry
+      SUGGESTIONS_PRESENT      – tab has pending suggested edits; accept/reject
+                                 them in the Docs UI first, then retry
       VERIFICATION_FAILED      – post-write re-read did not confirm the
                                   inserted table at the expected location
       INDEX_SIMULATION_FAILED  – compiled requests would land at an invalid

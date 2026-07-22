@@ -461,3 +461,124 @@ class TestMultipleMatchSpans:
         result = locate("x", tab, expected_matches=2)
         starts = [s for s, _ in result.spans]
         assert starts == sorted(starts)  # in document order
+
+
+# ---------------------------------------------------------------------------
+# Endpoint precision (issue #56 investigation, Codex review): the anchor
+# *start* offset is provably stable (_flatten_tab re-seeds from each API
+# startIndex), but soft-hyphen stripping and whitespace-run collapse are
+# length-changing transforms, so the match *endpoint* deserves its own
+# precision check rather than only asserting `result.rung`.
+# ---------------------------------------------------------------------------
+
+
+class TestSoftHyphenEndpointPrecision:
+    def test_span_end_lands_exactly_after_the_matched_word(self):
+        # No soft hyphen adjacent to the match at all — the simplest case:
+        # end must be exactly start + len(needle), not off by any amount.
+        tab = _tab(["pro­gramming"])
+        result = locate("programming", tab)
+        start, end = result.spans[0]
+        assert start == 1
+        assert end == 1 + len("pro­gramming")  # 13: 11 visible + 1 stripped SHY
+
+    def test_trailing_soft_hyphen_run_is_absorbed_not_left_dangling(self):
+        # A soft hyphen (or run of them) immediately following the matched
+        # text is pulled into the span rather than left as an untouched
+        # gap after the match — the normalized needle has no notion of "one
+        # more invisible char after me" to leave alone, so the orig_pos
+        # boundary lands right after the run. This is provably bounded to
+        # invisible characters only: _norm_softhyphen only ever skips actual
+        # U+00AD code points one at a time, so it can never skip past a
+        # visible character to reach the boundary — pinned here so any
+        # future change to the soft-hyphen rung is caught if it starts
+        # swallowing visible text instead.
+        #
+        # The SHY inside "pro­gram" forces the fallthrough to the
+        # soft-hyphen rung (rungs 1-3 don't match "program" against this
+        # literal text at all); the 2 trailing SHY after "gram" are what
+        # this test actually probes — do they get silently absorbed past
+        # the match's true end?
+        raw = "pro­gram­­ming"  # "pro" + SHY + "gram" + 2 SHY + "ming"
+        tab = _tab_raw([raw + "\n"])
+        result = locate("program", tab, expected_matches=1)
+        assert result.rung == RUNG_SOFTHYPHEN
+        start, end = result.spans[0]
+        assert start == 1
+        # "pro"+"gram" (7 visible chars) + all 3 stripped SHY (1 interior +
+        # 2 trailing) = 10; the next visible character ("m" of "ming") is
+        # NOT included.
+        assert end == 1 + 10
+        assert raw[end - 1 - 1] == "­"  # last absorbed char is the 2nd trailing SHY
+        assert raw[end - 1] == "m"  # first char after the span is real text
+
+
+class TestWhitespaceCollapseEndpointPrecision:
+    def test_multi_space_run_collapses_to_exactly_the_run_width(self):
+        # Needle has a single space; doc has a 3-space run in its place.
+        # The span must cover the ENTIRE run (so a replace doesn't leave
+        # stray spaces behind) and stop exactly at the next visible char.
+        raw = "Hello   world\n"  # 3 spaces between the words
+        tab = _tab_raw([raw])
+        result = locate("Hello world", tab)
+        start, end = result.spans[0]
+        assert start == 1
+        assert end == 1 + len("Hello   world")  # covers all 3 spaces, stops before "\n"
+        assert raw[end - 1 - 1] == "d"  # last char actually included in the span
+        assert raw[end - 1] == "\n"  # the trailing newline is correctly excluded
+
+
+# ---------------------------------------------------------------------------
+# _flatten_tab integrity check (issue #56 Step 3, defense-in-depth): a text
+# run whose UTF-16 length disagrees with its own API-reported endIndex must
+# raise INDEX_MODEL_DIVERGENCE rather than silently feeding a wrong offset
+# into locate()'s callers. Does NOT catch the issue #56 root cause (a
+# PREVIEW-vs-SUGGESTIONS_INLINE index-space mismatch is self-consistent
+# within the PREVIEW read) — see test_suggestion_guard.py for that.
+# ---------------------------------------------------------------------------
+
+
+class TestFlattenTabIntegrityCheck:
+    def test_mismatched_run_length_raises_index_model_divergence(self):
+        # "Hello\n" is 6 UTF-16 units; claim an endIndex that is 1 too high.
+        tab = {
+            "body": {
+                "content": [
+                    {
+                        "startIndex": 1,
+                        "endIndex": 8,  # should be 7
+                        "paragraph": {
+                            "elements": [
+                                {"startIndex": 1, "endIndex": 8, "textRun": {"content": "Hello\n"}}
+                            ]
+                        },
+                    }
+                ]
+            }
+        }
+        with pytest.raises(VerifyError) as exc_info:
+            locate("Hello", tab)
+        assert exc_info.value.envelope.error_code == ErrorCode.INDEX_MODEL_DIVERGENCE
+        assert exc_info.value.envelope.diagnostics["api_end_reported"] == 8
+        assert exc_info.value.envelope.diagnostics["api_end_computed"] == 7
+
+    def test_run_missing_explicit_indices_is_exempt_not_flagged(self):
+        # A run with NO startIndex/endIndex at all (some hand-built fixtures
+        # omit them) has nothing to cross-check against and must not raise —
+        # only runs that explicitly report both are held to the check.
+        tab = {
+            "body": {
+                "content": [{"paragraph": {"elements": [{"textRun": {"content": "Hello\n"}}]}}]
+            }
+        }
+        # Must not raise — falls back to the default api_start=0 and is
+        # simply unmatched by a needle that isn't "Hello" at position 0;
+        # searching for the actual content should succeed normally.
+        result = locate("Hello", tab)
+        assert result.spans[0] == (0, 5)
+
+    def test_self_consistent_run_does_not_raise(self):
+        # A normal, correctly-indexed run must never trip the check.
+        tab = _tab(["Hello world"])
+        result = locate("Hello world", tab)
+        assert result.spans[0] == (1, 12)

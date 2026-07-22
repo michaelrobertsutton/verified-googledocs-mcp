@@ -59,6 +59,9 @@ class ErrorCode(Enum):
     AUTH_EXPIRED = "AUTH_EXPIRED"
     INDEX_SIMULATION_FAILED = "INDEX_SIMULATION_FAILED"
     TABLE_NOT_FOUND = "TABLE_NOT_FOUND"
+    SUGGESTIONS_PRESENT = "SUGGESTIONS_PRESENT"
+    INVALID_RANGE = "INVALID_RANGE"
+    INDEX_MODEL_DIVERGENCE = "INDEX_MODEL_DIVERGENCE"
 
 
 # Which codes signal a transient condition worth retrying.
@@ -174,10 +177,41 @@ def _flatten_tab(tab_json: dict[str, Any]) -> tuple[str, list[int], list[int]]:
                         block_parts.append(para_idx)
                         u16_cursor += _utf16_width(ch)
 
-                    # Integrity check: cursor should match endIndex.
-                    # (Soft assertion — mismatches would indicate API oddities or
-                    # inline objects within the text run, not a hard failure.)
-                    _ = api_end  # retained for future assertion logging
+                    # Integrity check (issue #56 Step 3, defense-in-depth):
+                    # when a run explicitly carries BOTH startIndex and
+                    # endIndex (every real Docs API response does; some
+                    # hand-built test fixtures omit them and fall back to the
+                    # api_start default above — those are intentionally
+                    # exempted, since there is nothing to cross-check), our
+                    # walked UTF-16 length must match what the API itself
+                    # reports. A mismatch means this module's UTF-16 width
+                    # model disagrees with the API for this run, so offsets
+                    # derived from it cannot be trusted — raise rather than
+                    # silently feed a wrong offset into a write.
+                    #
+                    # This is narrower than it may look: it cannot catch the
+                    # issue #56 root cause (a PREVIEW-vs-SUGGESTIONS_INLINE
+                    # index-space mismatch is perfectly self-consistent within
+                    # the PREVIEW read and still the wrong index space for
+                    # batchUpdate) — see suggestions.assert_no_pending_suggestions
+                    # for that fix. This only guards against a genuine
+                    # width-accounting divergence within a single read.
+                    if "startIndex" in element and "endIndex" in element and u16_cursor != api_end:
+                        raise _make_error(
+                            ErrorCode.INDEX_MODEL_DIVERGENCE,
+                            (
+                                "Text run's computed UTF-16 length does not match the "
+                                f"Docs API's reported endIndex (computed {u16_cursor}, "
+                                f"API reports {api_end}); offsets derived from this read "
+                                "cannot be trusted."
+                            ),
+                            {
+                                "api_start": api_start,
+                                "api_end_reported": api_end,
+                                "api_end_computed": u16_cursor,
+                                "content": content_str,
+                            },
+                        )
 
                 para_idx += 1
 

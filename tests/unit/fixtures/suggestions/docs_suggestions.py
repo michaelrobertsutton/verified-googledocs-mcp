@@ -236,6 +236,40 @@ def doc_with_no_suggestions() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Fixture: suggestion present, but only in a DIFFERENT tab than the one
+# a caller cares about (issue #56 write-guard: must be tab-scoped)
+# ---------------------------------------------------------------------------
+
+
+def doc_with_suggestion_in_other_tab() -> dict[str, Any]:
+    """tab-a is clean; tab-b (a different tab in the same doc) has a pending
+    suggested insertion. A guard checking tab-a must not be blocked by it.
+
+    Suggestion id: "ins-other-tab" (in tab-b only).
+    """
+    body_a = _body([_paragraph([_text_run("Plain text in tab A")])])
+    body_b = _body(
+        [
+            _paragraph(
+                [
+                    _text_run("Before "),
+                    _text_run("new text", insertion_ids=["ins-other-tab"]),
+                    _text_run(" after"),
+                ]
+            )
+        ]
+    )
+    return {
+        "documentId": "doc-suggestion-other-tab",
+        "revisionId": "rev-other-tab",
+        "tabs": [
+            _tab("tab-a", "Tab A", body_a),
+            _tab("tab-b", "Tab B", body_b),
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Fixture: tabless document with a suggestion
 # ---------------------------------------------------------------------------
 

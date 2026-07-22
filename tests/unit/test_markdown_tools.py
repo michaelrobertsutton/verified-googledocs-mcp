@@ -57,6 +57,15 @@ def _build_mock_env(pre_doc: dict[str, Any], post_doc: dict[str, Any]):
         patch("verified_googledocs_mcp.server.build_docs_service", _fake_build_service),
         patch("verified_googledocs_mcp.server.fetch_document", _fake_fetch),
         patch("verified_googledocs_mcp.markdown_mutations.fetch_document", _fake_fetch),
+        # Issue #56 suggestion guard: stubbed out here since these tests exercise
+        # markdown-pipeline logic, not suggestion detection (covered separately).
+        # Without this, the guard's own SUGGESTIONS_INLINE get() would hit the
+        # unconfigured mock_service and return a non-dict, non-JSON-serializable
+        # MagicMock.
+        patch(
+            "verified_googledocs_mcp.markdown_mutations.assert_no_pending_suggestions",
+            lambda **kwargs: None,
+        ),
     ]
     return patchers, mock_service
 
@@ -210,6 +219,59 @@ class TestReplaceRangeMarkdown:
         assert "UNSUPPORTED_MARKDOWN" in str(result.content)
 
     @pytest.mark.asyncio
+    async def test_range_beyond_tab_extent_returns_invalid_range(self) -> None:
+        # issue #56 (Codex review): computed_at_revision ties the range to a
+        # document revision but not to a tab — a range computed against a
+        # DIFFERENT tab (or otherwise stale/malformed) can carry
+        # numerically-valid-looking indices that don't fit THIS tab. The
+        # revision matches here, but end_index (999) is far past this tab's
+        # real extent ([1, 13) for "Hello world\n"), so it must be refused
+        # rather than silently compiling/simulating against a bogus range.
+        pre = simple_markdown_doc("Hello world", revision="rev-1")
+        post = simple_markdown_doc("Hello world", revision="rev-1")
+        patchers, mock_service = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "replace_range_markdown",
+                    {
+                        "doc_id": "doc-test",
+                        "tab_id": "tab-1",
+                        "start_index": 1,
+                        "end_index": 999,
+                        "computed_at_revision": "rev-1",
+                        "markdown": "New content",
+                    },
+                    raise_on_error=False,
+                )
+        assert result.is_error
+        assert "INVALID_RANGE" in str(result.content)
+        mock_service.documents.return_value.batchUpdate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_inverted_range_returns_invalid_range(self) -> None:
+        pre = simple_markdown_doc("Hello world", revision="rev-1")
+        post = simple_markdown_doc("Hello world", revision="rev-1")
+        patchers, mock_service = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "replace_range_markdown",
+                    {
+                        "doc_id": "doc-test",
+                        "tab_id": "tab-1",
+                        "start_index": 10,
+                        "end_index": 5,  # end before start
+                        "computed_at_revision": "rev-1",
+                        "markdown": "New content",
+                    },
+                    raise_on_error=False,
+                )
+        assert result.is_error
+        assert "INVALID_RANGE" in str(result.content)
+        mock_service.documents.return_value.batchUpdate.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_structural_guardrail_refuses_table_loss(self) -> None:
         pre = doc_with_heading_and_table(revision="rev-1")
         post = doc_with_heading_and_table(revision="rev-2")
@@ -348,6 +410,13 @@ class TestReplaceRangeMarkdown:
         assert evidence["audit_logged"] is True
         audit_path = tmp_path / "verified-googledocs-mcp" / "audit.jsonl"
         assert audit_path.exists()
+        # issue #56 defect 3: the batchUpdate WAS sent and the revision DID
+        # advance (rev-1 -> rev-2) even though verification failed — the
+        # envelope must say so plainly rather than leaving applied=false as
+        # the only signal, which reads as "nothing happened" when the
+        # document was in fact mutated and has no automatic rollback.
+        assert evidence["document_mutated"] is True
+        assert evidence["needs_manual_restore"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -776,6 +845,32 @@ class TestInsertImage:
                 )
         assert result.is_error
         assert "TAB_NOT_FOUND" in str(result.content)
+
+    @pytest.mark.asyncio
+    async def test_anchor_inside_table_cell_is_invalid_input(self) -> None:
+        # Issue #56 (Codex review): locate() recurses into table cells, but
+        # _find_paragraph_end only scans top-level body paragraphs and would
+        # otherwise silently fall back to a nonsensical insertion index for
+        # an anchor inside a table. Must be refused outright, matching
+        # insert_table's existing _assert_anchor_not_in_table guard.
+        pre = doc_with_heading_and_table(revision="rev-1")
+        post = doc_with_heading_and_table(revision="rev-1")
+        patchers, _ = _build_mock_env(pre, post)
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "insert_image",
+                    {
+                        "doc_id": "doc-table",
+                        "tab_id": "tab-1",
+                        "anchor": "Header A",
+                        "source": "https://example.com/image.png",
+                    },
+                    raise_on_error=False,
+                )
+        assert result.is_error
+        assert "INVALID_INPUT" in str(result.content)
+        assert "inside a table" in str(result.content)
 
 
 # ---------------------------------------------------------------------------

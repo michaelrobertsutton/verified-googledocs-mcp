@@ -53,6 +53,24 @@ def _isolated_audit_dir(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
 
 
+@pytest.fixture(autouse=True)
+def _no_pending_suggestions(monkeypatch):  # type: ignore[no-untyped-def]
+    """Stub the issue #56 suggestion guard as a no-op for these pipeline tests.
+
+    These tests exercise execute_insert_table/execute_replace_table_row logic
+    directly against a hand-built MagicMock service whose get().execute() is a
+    fixed side_effect sequence (pre-read, post-read, ...). The guard issues its
+    own SUGGESTIONS_INLINE get() through that same service, which would consume
+    an extra item from the sequence and break every test's response ordering.
+    Suggestion-detection itself is exercised by the dedicated guard tests, not
+    these pipeline-logic tests.
+    """
+    monkeypatch.setattr(
+        "verified_googledocs_mcp.tables.assert_no_pending_suggestions",
+        lambda **kwargs: None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Mock helpers
 # ---------------------------------------------------------------------------
@@ -395,6 +413,11 @@ class TestReplaceTableRow:
         evidence = envelope.diagnostics["evidence"]
         assert evidence["applied"] is False
         assert evidence["audit_logged"] is True
+        # issue #56 defect 3: batchUpdate WAS sent and the revision DID
+        # advance (rev-1 -> rev-2) even though the written row doesn't match
+        # what was requested — the envelope must say so, not just applied=false.
+        assert evidence["document_mutated"] is True
+        assert evidence["needs_manual_restore"] is True
 
     def test_dry_run_skips_batch_update(self) -> None:
         table, _ = build_table(1, [["Header A", "Header B"]])
@@ -619,6 +642,40 @@ class TestInsertTable:
         assert result["revision_before"] == "rev-1"
         assert result["revision_after"] == "rev-2"
         assert result["audit_logged"] is True
+
+    def test_table_not_confirmed_raises_verification_failed_with_mutation_flags(self) -> None:
+        # Post-read shows no table at the expected location at all (e.g. the
+        # API accepted the batchUpdate but the write landed somewhere the
+        # verifier doesn't recognize as the expected table) — table_confirmed
+        # is False, but a batchUpdate WAS sent and the revision DID advance
+        # (issue #56 defect 3: the envelope must say the document was
+        # mutated, not just applied=false).
+        pre, insert_at, table_start, _tab_end = _insert_table_anchor_doc()
+        rows = [["r0c0", "r0c1"]]
+        # post has no table at all -- same content as pre, just a new revision.
+        post = doc_with_content(
+            pre["tabs"][0]["documentTab"]["body"]["content"],
+            doc_id="doc-insert-table",
+            revision="rev-2",
+        )
+        service = _mock_service([pre, post])
+
+        with pytest.raises(VerifyError) as exc_info:
+            execute_insert_table(
+                service=service,
+                doc_id=pre["documentId"],
+                tab_id="tab-1",
+                anchor="Anchor here",
+                rows=rows,
+            )
+        envelope = exc_info.value.envelope
+        assert envelope.error_code == ErrorCode.VERIFICATION_FAILED
+        assert envelope.diagnostics["expected_table_start"] == table_start
+        evidence = envelope.diagnostics["evidence"]
+        assert evidence["applied"] is False
+        assert evidence["table_confirmed"] is False
+        assert evidence["document_mutated"] is True
+        assert evidence["needs_manual_restore"] is True
 
     def test_dry_run_clamps_when_anchor_is_in_the_last_paragraph(self) -> None:
         p1, tab_end = plain_paragraph("Anchor here", 1)

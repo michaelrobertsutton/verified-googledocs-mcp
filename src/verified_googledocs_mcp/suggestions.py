@@ -19,7 +19,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from .docs import _available_tab_ids, _find_tab_body
+from .docs import _available_tab_ids, _find_tab_body, fetch_document_inline
+from .verify import ErrorCode, _make_error
+
+# Suggestion kinds that shift text indices. A suggested insertion or deletion
+# changes where every subsequent character sits in SUGGESTIONS_INLINE space
+# relative to PREVIEW_WITHOUT_SUGGESTIONS space (issue #56); a style-only
+# suggestion (suggestedTextStyleChanges / suggestedParagraphStyleChanges,
+# reported as kind="style" by extract_suggestions) does not move anything and
+# is intentionally allowed through the write guard below.
+_INDEX_AFFECTING_KINDS = frozenset({"insertion", "deletion"})
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +75,107 @@ def extract_suggestions(
         raise ValueError(f"Tab '{tab_id}' not found. Available tabs: {available}")
 
     return _collect_suggestions(body, tab_id)
+
+
+def assert_no_pending_suggestions(
+    *,
+    service: Any,
+    doc_id: str,
+    tab_id: str,
+    expected_revision: str,
+) -> None:
+    """Refuse to proceed if the target tab has pending index-affecting suggestions.
+
+    Root cause (issue #56): every mutation pipeline pre-reads with
+    ``suggestionsViewMode=PREVIEW_WITHOUT_SUGGESTIONS`` (see ``fetch_document``'s
+    docstring — needed so a pending suggestion can't defeat the locator's
+    match-count guard from issue #28). But ``batchUpdate`` always mutates the
+    document's real index space, which is ``SUGGESTIONS_INLINE``. When the
+    target tab has a pending suggested insertion or deletion, those two index
+    spaces diverge by the net length of the suggested content, so every index
+    a pipeline computes from the PREVIEW read is wrong by that amount — the
+    write lands at the wrong offset (often mid-word) and corrupts the
+    document. This guard is the pre-write safety valve: refuse instead of
+    corrupting.
+
+    Only insertion/deletion suggestions are index-affecting; style-only
+    suggestions (bold/italic/paragraph-style suggestions) do not move indices
+    and are intentionally allowed through — blocking on those would needlessly
+    refuse writes to documents under active style review.
+
+    The INLINE read is attempted at ``expected_revision`` — the revision the
+    caller's PREVIEW pre-read captured, and the same revision `batchUpdate`
+    will pin via ``requiredRevisionId`` — since checking at a *different*
+    revision would validate the wrong snapshot. It is retried once on a
+    mismatch, purely as a best-effort nicety.
+
+    If it still disagrees after that, this check is silently skipped (no
+    raise) rather than blocking the write, for a specific reason: this
+    guard's actual job is narrower than "detect any revision drift." A
+    pending suggestion can sit at a perfectly *stable* revision indefinitely
+    (nothing needs to move for the PREVIEW-vs-INLINE corruption to occur —
+    PREVIEW hides content INLINE reveals, at the very same revision), which
+    is exactly the case this guard exists to catch, and it does — reliably,
+    since two back-to-back reads of an unchanging document always agree.
+    A revision *mismatch* between the two reads means something else
+    entirely: the document is being edited right now, by someone else, in
+    the narrow window between the caller's PREVIEW read and this INLINE
+    read. In that case the pipeline's own upcoming ``batchUpdate`` call —
+    which pins ``requiredRevisionId=expected_revision`` — already rejects
+    the write with the API's real REVISION_CONFLICT if the revision has
+    genuinely moved on, independent of anything this guard does. Raising a
+    second, less-specific error here instead would only shadow that more
+    accurate, existing signal, without adding any real safety (a moved
+    revision is caught either way).
+
+    Raises
+    ------
+    VerifyError(SUGGESTIONS_PRESENT)
+        The target tab has one or more pending insertion/deletion suggestions.
+    VerifyError(TAB_NOT_FOUND)
+        ``tab_id`` is not present in the INLINE-mode document (should not
+        happen if the caller's own PREVIEW pre-read already found the tab,
+        short of the document being restructured between reads).
+    """
+    inline_doc: dict[str, Any] = {}
+    matched_revision = False
+    for _attempt in range(2):
+        inline_doc = fetch_document_inline(service, doc_id)
+        if inline_doc.get("revisionId", "") == expected_revision:
+            matched_revision = True
+            break
+
+    if not matched_revision:
+        # The document is changing concurrently; defer to the write's own
+        # requiredRevisionId check rather than raising here (see docstring).
+        return
+
+    try:
+        found = extract_suggestions(inline_doc, tab_id)
+    except ValueError as exc:
+        raise _make_error(
+            ErrorCode.TAB_NOT_FOUND,
+            str(exc),
+            {"doc_id": doc_id, "tab_id": tab_id},
+        ) from exc
+
+    index_affecting = [s for s in found if s["kind"] in _INDEX_AFFECTING_KINDS]
+    if index_affecting:
+        raise _make_error(
+            ErrorCode.SUGGESTIONS_PRESENT,
+            (
+                f"Tab {tab_id!r} has {len(index_affecting)} pending suggested "
+                "insertion(s)/deletion(s). Writing now would compute indices against "
+                "the wrong index space and can corrupt the document (issue #56). "
+                "Accept or reject the pending suggestions in the Docs UI first, then retry."
+            ),
+            {
+                "doc_id": doc_id,
+                "tab_id": tab_id,
+                "suggestion_count": len(index_affecting),
+                "suggestion_ids": [s["suggestion_id"] for s in index_affecting],
+            },
+        )
 
 
 # ---------------------------------------------------------------------------

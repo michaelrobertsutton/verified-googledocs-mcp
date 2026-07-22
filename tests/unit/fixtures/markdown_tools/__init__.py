@@ -192,7 +192,13 @@ def doc_with_heading_and_table(revision: str = "rev-1") -> dict[str, Any]:
     """Doc with a heading paragraph at [1,20) and a table at [20,80)."""
     body = {
         "content": [
-            _heading_para(1, "Introduction", 1, 15),
+            # "Introduction\n" is 13 UTF-16 units starting at 1, so its own
+            # endIndex is 14 (self-consistent per issue #56's _flatten_tab
+            # integrity check). _table_elem keeps its original start/end so
+            # this fixture's other hardcoded indices stay unaffected — the
+            # 1-unit gap [14, 15) is harmless (no test depends on zero-gap
+            # contiguity between elements).
+            _heading_para(1, "Introduction", 1, 14),
             _table_elem(15, 60),
         ]
     }
@@ -234,7 +240,10 @@ def doc_with_image(revision: str = "rev-1") -> dict[str, Any]:
     """Doc with a heading and an inline image paragraph."""
     body = {
         "content": [
-            _heading_para(1, "My Doc", 1, 9),
+            # "My Doc\n" is 7 UTF-16 units starting at 1, so its own endIndex
+            # is 8 (self-consistent per issue #56's _flatten_tab integrity
+            # check). The following elements keep their original start/end.
+            _heading_para(1, "My Doc", 1, 8),
             _para("Paragraph with anchor text\n", 9, 36),
             _inline_image_para("img-001", 36, 38),
         ]
@@ -256,7 +265,10 @@ def doc_with_chip(revision: str = "rev-1") -> dict[str, Any]:
     """Doc with a person chip."""
     body = {
         "content": [
-            _heading_para(1, "Team", 1, 7),
+            # "Team\n" is 5 UTF-16 units starting at 1, so its own endIndex is
+            # 6 (self-consistent per issue #56's _flatten_tab integrity
+            # check). _chip_para keeps its original start/end.
+            _heading_para(1, "Team", 1, 6),
             _chip_para("alice@example.com", 7, 10),
         ]
     }
@@ -277,7 +289,10 @@ def doc_with_footnote(revision: str = "rev-1") -> dict[str, Any]:
     """Doc with a footnote reference."""
     body = {
         "content": [
-            _heading_para(1, "Notes", 1, 8),
+            # "Notes\n" is 6 UTF-16 units starting at 1, so its own endIndex
+            # is 7 (self-consistent per issue #56's _flatten_tab integrity
+            # check). _footnote_para keeps its original start/end.
+            _heading_para(1, "Notes", 1, 7),
             _footnote_para("fn-1", 8, 16),
         ]
     }

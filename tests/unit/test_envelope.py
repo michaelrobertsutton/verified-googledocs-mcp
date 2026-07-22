@@ -32,6 +32,9 @@ class TestErrorCodeCoverage:
         "AUTH_EXPIRED",
         "INDEX_SIMULATION_FAILED",
         "TABLE_NOT_FOUND",
+        "SUGGESTIONS_PRESENT",
+        "INVALID_RANGE",
+        "INDEX_MODEL_DIVERGENCE",
     }
 
     def test_all_codes_exist(self):
@@ -39,7 +42,7 @@ class TestErrorCodeCoverage:
         assert actual == self.EXPECTED_CODES
 
     def test_enum_count(self):
-        assert len(ErrorCode) == 15
+        assert len(ErrorCode) == 18
 
 
 class TestRetryablePolicy:
