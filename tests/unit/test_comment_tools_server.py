@@ -20,6 +20,7 @@ from fastmcp import Client
 from verified_googledocs_mcp.middleware import MUTATING_TOOLS
 from verified_googledocs_mcp.server import mcp
 from verified_googledocs_mcp.verify import ErrorCode, _make_error
+from tests.unit.fixtures.evidence import assert_top_level_evidence
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +136,7 @@ class TestResolveCommentTool:
                 )
         # Middleware must not have rejected it.
         assert not result.is_error
+        assert_top_level_evidence(result)
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +162,7 @@ class TestReplyToCommentTool:
                 )
         assert not result.is_error
         assert result.data["applied"] is True
+        assert_top_level_evidence(result)
 
     @pytest.mark.asyncio
     async def test_invalid_input_surfaces_as_tool_error(self) -> None:
@@ -260,3 +263,4 @@ class TestAddAnchoredCommentTool:
                     },
                 )
         assert not result.is_error
+        assert_top_level_evidence(result)
