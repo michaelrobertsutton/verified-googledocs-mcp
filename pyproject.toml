@@ -23,11 +23,17 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "fastmcp>=3.0",
+    # The major-version ceiling is deliberate: FastMCP 4 moves the protocol types
+    # from `mcp.types` to a standalone `mcp_types` package, which breaks the
+    # `import mcp.types` in middleware.py at startup. See #57.
+    "fastmcp>=3.0,<4",
     "google-api-python-client>=2.0",
     "google-auth-oauthlib>=1.0",
     "google-auth-httplib2>=0.2",
     "markdown-it-py>=3.0",
+    # Direct dependency, not just a fastmcp transitive: middleware.py imports
+    # mcp.types for CallToolRequestParams.
+    "mcp>=1.27,<2",
 ]
 
 [project.urls]
