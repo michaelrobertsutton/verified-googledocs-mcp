@@ -9,11 +9,14 @@ Verifies that:
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 
 from verified_googledocs_mcp.middleware import EvidenceEnforcementMiddleware, MUTATING_TOOLS
+from tests.unit.fixtures.evidence import assert_top_level_evidence
 
 
 # ---------------------------------------------------------------------------
@@ -170,3 +173,60 @@ class TestEvidenceEnforcement:
             r2 = await client.call_tool("find_sections", {})
         assert not r1.is_error
         assert not r2.is_error
+
+
+# ---------------------------------------------------------------------------
+# Structured-content shape assumption (issue #58)
+#
+# EvidenceEnforcementMiddleware only works while FastMCP hands back the bare
+# tool dict as structured_content — see middleware.py:74-79. FastMCP wraps a
+# tool's return under a single "result" key whenever the inferred output
+# schema is not object-typed. Every real tool here returns dict[str, Any],
+# which infers an object schema, so nothing is wrapped today. These tests pin
+# that FastMCP behaviour so a future FastMCP version (or a narrowed return
+# annotation) that starts wrapping trips a test here, not a silent regression
+# in production. See also test_tool_manifest.py::TestOutputSchemaContract
+# (the manifest-level guard this pins) and
+# fixtures/evidence.py::assert_top_level_evidence (used at real mutating-tool
+# call sites).
+# ---------------------------------------------------------------------------
+
+
+class TestStructuredContentShapeAssumption:
+    @pytest.mark.asyncio
+    async def test_dict_return_stays_unwrapped_and_satisfies_middleware(self) -> None:
+        """The exact annotation every mutating tool in this server uses:
+        dict[str, Any]. Registered under a MUTATING_TOOLS name so the
+        middleware actually runs — proves the contract on a real enforced
+        call, not just on FastMCP's client-side result shape."""
+        test_mcp = _make_test_server()
+
+        @test_mcp.tool(name="replace_text")
+        def dict_tool() -> dict[str, Any]:
+            return {"applied": True, "match_count": 1}
+
+        async with Client(test_mcp) as client:
+            result = await client.call_tool("replace_text", {})
+        assert not result.is_error
+        assert_top_level_evidence(result)
+
+    @pytest.mark.asyncio
+    async def test_non_object_return_gets_wrapped_by_fastmcp(self) -> None:
+        """Canary for the hazard test_tool_manifest.py guards against: if
+        FastMCP ever changes how it marks or shapes a wrapped result, this
+        test — not the manifest guard — is what fails and names the reason.
+        Registered under a non-mutating name deliberately: middleware
+        enforcement is not the point here, FastMCP's own schema inference is."""
+        test_mcp = _make_test_server()
+
+        @test_mcp.tool(name="list_tabs")
+        def list_tool() -> list[str]:
+            return ["applied"]
+
+        async with Client(test_mcp) as client:
+            tools = {t.name: t for t in await client.list_tools()}
+            result = await client.call_tool("list_tabs", {})
+        assert not result.is_error
+        assert result.structured_content == {"result": ["applied"]}
+        assert tools["list_tabs"].outputSchema is not None
+        assert tools["list_tabs"].outputSchema.get("x-fastmcp-wrap-result") is True

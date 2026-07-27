@@ -23,6 +23,7 @@ import pytest
 from fastmcp import Client
 
 from verified_googledocs_mcp.server import mcp
+from tests.unit.fixtures.evidence import assert_top_level_evidence
 from tests.unit.fixtures.tables import (
     build_table,
     doc_with_content,
@@ -222,6 +223,7 @@ class TestReplaceTableRowWrapper:
                     },
                 )
         assert not result.is_error  # middleware did not reject for missing evidence
+        assert_top_level_evidence(result)
         data = result.data
         assert data["applied"] is True
         assert data["cells_match"] is True
@@ -314,6 +316,7 @@ class TestInsertTableWrapper:
                     },
                 )
         assert not result.is_error  # middleware did not reject for missing evidence
+        assert_top_level_evidence(result)
         data = result.data
         assert data["applied"] is True
         assert data["table_confirmed"] is True

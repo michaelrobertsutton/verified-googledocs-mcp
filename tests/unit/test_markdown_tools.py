@@ -15,6 +15,7 @@ import pytest
 from fastmcp import Client
 
 from verified_googledocs_mcp.server import mcp
+from tests.unit.fixtures.evidence import assert_top_level_evidence
 from tests.unit.fixtures.markdown_tools import (
     doc_with_chip,
     doc_with_footnote,
@@ -901,6 +902,7 @@ class TestMiddlewareEnforcement:
                 )
         assert not result.is_error
         assert "applied" in result.data
+        assert_top_level_evidence(result)
 
     @pytest.mark.asyncio
     async def test_replace_tab_markdown_carries_applied(self) -> None:
@@ -919,6 +921,7 @@ class TestMiddlewareEnforcement:
                 )
         assert not result.is_error
         assert "applied" in result.data
+        assert_top_level_evidence(result)
 
     @pytest.mark.asyncio
     async def test_append_markdown_carries_applied(self) -> None:
@@ -937,6 +940,7 @@ class TestMiddlewareEnforcement:
                 )
         assert not result.is_error
         assert "applied" in result.data
+        assert_top_level_evidence(result)
 
     @pytest.mark.asyncio
     async def test_insert_image_carries_applied(self) -> None:
@@ -956,6 +960,7 @@ class TestMiddlewareEnforcement:
                 )
         assert not result.is_error
         assert "applied" in result.data
+        assert_top_level_evidence(result)
 
 
 # ---------------------------------------------------------------------------
