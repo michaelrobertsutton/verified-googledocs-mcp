@@ -1773,6 +1773,7 @@ dependencies = [
     { name = "google-auth-httplib2" },
     { name = "google-auth-oauthlib" },
     { name = "markdown-it-py" },
+    { name = "mcp" },
 ]
 
 [package.optional-dependencies]
@@ -1786,11 +1787,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastmcp", specifier = ">=3.0" },
+    { name = "fastmcp", specifier = ">=3.0,<4" },
     { name = "google-api-python-client", specifier = ">=2.0" },
     { name = "google-auth-httplib2", specifier = ">=0.2" },
     { name = "google-auth-oauthlib", specifier = ">=1.0" },
     { name = "markdown-it-py", specifier = ">=3.0" },
+    { name = "mcp", specifier = ">=1.27,<2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
