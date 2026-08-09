@@ -59,6 +59,7 @@ A read goes `server -> docs -> markdown`. A verified mutation goes `server -> ve
 The evidence shape depends on the kind of mutation, but all run through the same pipeline:
 
 - **Text-edit** (`replace_text`): match count, rung, before/after excerpts, revisions.
+- **Style-edit** (`format_text`): compiles only `updateTextStyle` requests — no delete/insert/merge op is ever compiled, so it is safe inside merged-cell tables by construction. Verification reports the actual `textRun` style flags (`runs_before`/`runs_after`) overlapping each matched span, not a text excerpt, since a literal `**word**` and a genuinely bold "word" read back identically as plain text. An idempotent call (every requested field already matches) skips the write entirely rather than issuing a no-op `batchUpdate` that would otherwise bump the revision for nothing.
 - **Range/markdown** (`replace_*_markdown`, `append_markdown`): excerpts can't catch a dropped table elsewhere in the range, so verification re-exports the affected range to markdown and structurally diffs it against the input.
 - **Structural** (`insert_image`): post-read confirms an inline object now exists at the resolved anchor.
 - **Comment-state** (`resolve_comment`, `reply_to_comment`, `add_anchored_comment`): post-write re-query returns the comment's actual final state; a comment still open after a resolve is an error.

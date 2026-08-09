@@ -28,6 +28,7 @@ from fastmcp.tools.base import ToolResult
 MUTATING_TOOLS: frozenset[str] = frozenset(
     {
         "replace_text",
+        "format_text",
         "add_anchored_comment",
         "reply_to_comment",
         "resolve_comment",

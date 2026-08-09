@@ -37,6 +37,7 @@ from .docs import (
     read_tab,
 )
 from .exports import execute_export_pdf
+from .formatting import execute_format_text
 from .middleware import EvidenceEnforcementMiddleware
 from .suggestions import extract_suggestions
 from .markdown_mutations import (
@@ -60,8 +61,8 @@ mcp = FastMCP(
         "MCP server for Google Docs with tab-scoped reads and verified writes. "
         "Every tool requires an explicit tab_id obtained from list_tabs. "
         "Call list_tabs first when you do not know the tab structure of a document. "
-        "Mutating tools (replace_text, replace_table_row, insert_table, and the "
-        "markdown writers) re-read after every write and return before/after "
+        "Mutating tools (replace_text, format_text, replace_table_row, insert_table, "
+        "and the markdown writers) re-read after every write and return before/after "
         "evidence so writes cannot report false success. export_pdf is the "
         "exception: it writes a local PDF file only and never modifies the document."
     ),
@@ -258,6 +259,93 @@ def replace_text(
             tab_id=tab_id,
             find=find,
             replace=replace,
+            expected_matches=expected_matches,
+            dry_run=dry_run,
+        )
+    except VerifyError as exc:
+        _raise_tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool: format_text
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def format_text(
+    doc_id: str,
+    tab_id: str,
+    find: str,
+    style: dict[str, bool],
+    expected_matches: int = 1,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Apply character styling (bold/italic/underline) to a matched text span.
+
+    Use this tool when you need to style existing text in place — bold a
+    phrase, un-bold it, italicize it — without touching its content. Unlike
+    replace_text (which deletes and reinserts text and cannot express
+    styling), this tool compiles ONLY ``updateTextStyle`` requests, so it is
+    safe to use inside a table cell even when the table has hand-merged
+    cells: no delete/insert/merge request is ever compiled, and the response
+    reports every ``compiled_request_kinds`` entry so that claim is checked,
+    not just asserted.
+
+    Call list_tabs first to get the tab_id, then read_document to confirm the
+    text you want to style is present as-is. ``style`` maps any of
+    ``bold``/``italic``/``underline`` to ``true`` or ``false`` — e.g.
+    ``{"bold": true}`` to bold, ``{"bold": false}`` to un-bold. At least one
+    key is required.
+
+    Matching uses the same normalization ladder and match-count guard as
+    replace_text (exact → curly/straight quote equivalence → NBSP/whitespace
+    collapse → soft-hyphen strip; refuses unless the match count equals
+    ``expected_matches``). If the matched text already carries every
+    requested style value, the call is a no-op: it returns
+    ``applied: true``, ``style_mutated: false``, and issues no write at all
+    (so an idempotent re-run does not create a new document revision).
+
+    The response includes, per matched span, the actual textRun style flags
+    before and after (``runs_before``/``runs_after``) — not a markdown or
+    plain-text diff, since genuine bold and a literal ``**word**`` both
+    render identically as text. ``content_mutated`` is always ``false``,
+    proven by ``compiled_request_kinds`` containing only ``updateTextStyle``.
+    Style reflects ``textRun.textStyle`` only: a heading rendered bold by its
+    named/paragraph style rather than an explicit run style will not show
+    ``bold: true`` here, matching every other style read in this server. A
+    pending style-only suggestion on the target span is allowed through (see
+    SUGGESTIONS_PRESENT below) and evidence reflects the base, non-suggested
+    style, same as every read in this server.
+
+    Set ``dry_run=True`` to preview the operation without writing; the
+    response carries ``applied: false`` and a *predicted* ``runs_after``
+    (the requested fields overlaid on the current runs) but makes no API
+    call.
+
+    Errors are returned as typed envelopes with ``error_code``, ``message``,
+    ``diagnostics``, and ``retryable`` so the caller can act on them precisely:
+      ZERO_MATCH          – find string not found; near-miss span included
+      MATCH_COUNT_MISMATCH – wrong number of matches; all locations listed
+      STRUCTURAL_BOUNDARY – match crosses a paragraph or table-cell boundary
+      REVISION_CONFLICT   – document changed mid-call; re-read and retry
+      VERIFICATION_FAILED – the write landed but could not be confirmed on
+                            re-read; check diagnostics before assuming a
+                            manual restore is needed — a concurrent edit
+                            near the target text is a common, benign cause
+      INVALID_INPUT       – empty find, or style is empty/unknown-key/non-bool
+      TAB_NOT_FOUND       – tab_id not in document; available tabs listed
+      SUGGESTIONS_PRESENT – tab has a pending suggested insertion/deletion
+                            (not a style suggestion); accept/reject it in the
+                            Docs UI first, then retry
+    """
+    service = _get_service()
+    try:
+        return execute_format_text(
+            service=service,
+            doc_id=doc_id,
+            tab_id=tab_id,
+            find=find,
+            style=style,
             expected_matches=expected_matches,
             dry_run=dry_run,
         )

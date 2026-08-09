@@ -206,6 +206,7 @@ def _extract_structured(body: dict[str, Any]) -> dict[str, Any]:
                             "text": text,
                             "bold": ts.get("bold", False),
                             "italic": ts.get("italic", False),
+                            "underline": ts.get("underline", False),
                             "link": ts.get("link", {}).get("url", ""),
                             "start": inline.get("startIndex", 0),
                             "end": inline.get("endIndex", 0),

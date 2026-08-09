@@ -238,6 +238,139 @@ def _flatten_tab(tab_json: dict[str, Any]) -> tuple[str, list[int], list[int]]:
 
 
 # ---------------------------------------------------------------------------
+# Style-run collection (format_text)
+# ---------------------------------------------------------------------------
+
+# Text-style fields format_text (and replace_table_row's style carry-over)
+# operate on. Shared here — not in a mutating module — because both the
+# read-only tables.py and the mutating formatting.py need it.
+_STYLE_ALLOWLIST = ("bold", "italic", "underline")
+
+
+def _walk_runs(tab_json: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten a tab body into per-textRun records, preserving run identity and style.
+
+    Mirrors _flatten_tab's traversal (paragraphs, recursing into
+    table -> tableRows -> tableCells -> content) but keeps each run intact
+    instead of exploding it into per-character arrays, so callers can inspect
+    a run's textStyle alongside its UTF-16 span. _flatten_tab itself stays
+    focused on the plain-text + index-map shape locate() needs; this is its
+    style-aware sibling, used by _collect_style_runs below.
+
+    Each record: {"text": str, "api_start": int, "api_end": int, "text_style": dict}.
+    """
+    body = tab_json.get("body", {})
+    content = body.get("content", [])
+    runs: list[dict[str, Any]] = []
+
+    def walk_content(elements: list[dict[str, Any]]) -> None:
+        for structural_element in elements:
+            if "paragraph" in structural_element:
+                para = structural_element["paragraph"]
+                for element in para.get("elements", []):
+                    if "textRun" not in element:
+                        continue
+                    run = element["textRun"]
+                    api_start = element.get("startIndex", 0)
+                    api_end = element.get("endIndex", api_start)
+                    runs.append(
+                        {
+                            "text": run.get("content", ""),
+                            "api_start": api_start,
+                            "api_end": api_end,
+                            "text_style": run.get("textStyle", {}),
+                        }
+                    )
+
+            elif "table" in structural_element:
+                for row in structural_element["table"].get("tableRows", []):
+                    for cell in row.get("tableCells", []):
+                        walk_content(cell.get("content", []))
+
+            elif "tableCell" in structural_element:
+                # Defensive support for callers that pass a table cell as a body.
+                walk_content(structural_element["tableCell"].get("content", []))
+
+    walk_content(content)
+    return runs
+
+
+def _clip_run_text(run: dict[str, Any], overlap_start: int, overlap_end: int) -> str:
+    """Return the slice of run["text"] whose UTF-16 span is [overlap_start, overlap_end).
+
+    Walks the run's characters from its own api_start exactly as _flatten_tab
+    does, so astral (2-UTF-16-unit) characters clip at the right boundary.
+    """
+    cursor = run["api_start"]
+    parts: list[str] = []
+    for ch in run["text"]:
+        if overlap_start <= cursor < overlap_end:
+            parts.append(ch)
+        cursor += _utf16_width(ch)
+        if cursor >= overlap_end:
+            break
+    return "".join(parts)
+
+
+def _collect_style_runs(
+    tab_json: dict[str, Any], spans: list[tuple[int, int]]
+) -> list[list[dict[str, Any]]]:
+    """Return, per span, the textRun(s) overlapping it — clipped to the span.
+
+    Each element of the outer list corresponds to one span in *spans* (same
+    order); each inner list holds one dict per overlapping run:
+    ``{"text", "start", "end", "bold", "italic", "underline"}`` (start/end are
+    UTF-16 API indices of the clipped slice, not the run's own extent). A
+    ``find`` that straddles two runs (e.g. half already bold) surfaces both,
+    so a caller can see the prior run boundaries directly in the evidence
+    rather than a single flattened style.
+
+    Pure; no I/O. Recurses into tables (via _walk_runs), unlike
+    docs._extract_structured, which is why format_text uses this instead of
+    that read tool's structured-run shape.
+    """
+    runs = _walk_runs(tab_json)
+    result: list[list[dict[str, Any]]] = []
+    for span_start, span_end in spans:
+        span_runs: list[dict[str, Any]] = []
+        for run in runs:
+            if run["api_start"] >= span_end or run["api_end"] <= span_start:
+                continue
+            overlap_start = max(run["api_start"], span_start)
+            overlap_end = min(run["api_end"], span_end)
+            if overlap_start >= overlap_end:
+                continue
+            text_style = run["text_style"]
+            span_runs.append(
+                {
+                    "text": _clip_run_text(run, overlap_start, overlap_end),
+                    "start": overlap_start,
+                    "end": overlap_end,
+                    "bold": text_style.get("bold", False),
+                    "italic": text_style.get("italic", False),
+                    "underline": text_style.get("underline", False),
+                }
+            )
+        result.append(span_runs)
+    return result
+
+
+def _style_matches(runs: list[list[dict[str, Any]]], style: dict[str, bool]) -> bool:
+    """True if every run in every span already carries every requested field's value.
+
+    Shared by formatting.py's no-op pre-check (skip the write when nothing
+    would change) and assemble_format_text_evidence's style_mutated below —
+    one predicate, not two independently-maintained copies.
+    """
+    return all(
+        run.get(field) == value
+        for span_runs in runs
+        for run in span_runs
+        for field, value in style.items()
+    )
+
+
+# ---------------------------------------------------------------------------
 # Normalization ladder
 # ---------------------------------------------------------------------------
 
@@ -645,10 +778,92 @@ def assemble_text_edit_evidence(
 
 
 # ---------------------------------------------------------------------------
+# Style-run evidence helper (format_text)
+# ---------------------------------------------------------------------------
+
+
+def assemble_format_text_evidence(
+    *,
+    style: dict[str, bool],
+    match_count: int,
+    rung: str,
+    spans: list[tuple[int, int]],
+    runs_before: list[list[dict[str, Any]]],
+    runs_after: list[list[dict[str, Any]]],
+    revision_before: str,
+    revision_after: str,
+    applied: bool,
+    compiled_request_kinds: list[str],
+    audit_logged: bool,
+    audit_log_reason: str = "",
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Assemble format_text's structured-run evidence dict.
+
+    Unlike ``assemble_text_edit_evidence``, whose excerpts are plain,
+    style-blind text, this reports the actual textRun style flags overlapping
+    each matched span, before and after — the level of evidence issue #63
+    calls for, since a markdown/plain-text diff cannot distinguish
+    ``**word**`` typed literally from an actually-bold "word".
+
+    Pure (no I/O): the caller (``formatting.execute_format_text``) is
+    responsible for computing ``runs_before``/``runs_after`` via
+    ``_collect_style_runs`` against the right tab JSON and spans for each —
+    on a real write, ``runs_after`` must come from a *fresh* post-write
+    ``locate()`` call, not the pre-write spans reused verbatim, since a
+    concurrent edit elsewhere in the tab could have shifted indices between
+    the write and the post-read. ``spans`` here is always the pre-write
+    locate span, reported as "where this call targeted".
+
+    ``content_mutated`` is always ``False`` — provable by construction, since
+    a compiled batch containing only ``updateTextStyle`` requests cannot
+    touch document text. This is a scoped claim, not a whole-document
+    integrity check: it says nothing about text outside the located spans.
+
+    ``style_mutated`` is ``False`` when every requested field already held
+    its requested value on every run in every span (whether because the
+    write was skipped as a no-op, or — on the ``dry_run`` path — because the
+    predicted post-write state matches the pre-write state).
+
+    Deliberately derived from ``runs_before`` alone via ``_style_matches``,
+    not a before/after diff: a real write can change how the Docs API
+    segments runs (e.g. two runs with a shared style boundary merge into
+    one), so ``runs_before``/``runs_after`` can differ in per-span run
+    *count*. Pairing them positionally (``zip``) would silently truncate to
+    the shorter list and miss a real style change hiding in the dropped
+    tail — exactly the contradictory "nothing changed" evidence this
+    function exists to prevent. "Did runs_before already satisfy every
+    requested field" is equivalent to "was a write necessary", which is what
+    this flag reports, and needs no comparison against runs_after at all.
+    """
+    style_mutated = not _style_matches(runs_before, style)
+
+    evidence: dict[str, Any] = {
+        "applied": applied,
+        "dry_run": dry_run,
+        "match_count": match_count,
+        "rung": rung,
+        "style": style,
+        "spans": [{"start": s, "end": e} for s, e in spans],
+        "runs_before": runs_before,
+        "runs_after": runs_after,
+        "content_mutated": False,
+        "style_mutated": style_mutated,
+        "compiled_request_kinds": compiled_request_kinds,
+        "revision_before": revision_before,
+        "revision_after": revision_after,
+        "audit_logged": audit_logged,
+    }
+    if audit_log_reason:
+        evidence["audit_log_reason"] = audit_log_reason
+    return evidence
+
+
+# ---------------------------------------------------------------------------
 # Audit writer
 # ---------------------------------------------------------------------------
 
-_AUDIT_REDACTED_KEYS = frozenset({"before", "after"})
+_AUDIT_REDACTED_KEYS = frozenset({"before", "after", "runs_before", "runs_after"})
 
 # Operator control surface for audit-excerpt redaction. No tool exposes the
 # toggle, so this environment variable is the only way to reach the redaction

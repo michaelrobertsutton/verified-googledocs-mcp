@@ -36,6 +36,7 @@ from .markdown_writer import _table_cell_index, _utf16_len
 from .mutations import _translate_http_error
 from .suggestions import assert_no_pending_suggestions
 from .verify import (
+    _STYLE_ALLOWLIST,
     ErrorCode,
     VerifyError,
     _make_error,
@@ -45,9 +46,9 @@ from .verify import (
     locate,
 )
 
-# Text-style fields replace_table_row will carry over from the cell's
-# pre-existing first textRun onto the newly inserted replacement text.
-_STYLE_ALLOWLIST = ("bold", "italic", "underline")
+# _STYLE_ALLOWLIST (bold/italic/underline) is defined in verify.py — shared
+# with formatting.py's format_text — and imported here for replace_table_row's
+# style carry-over from a cell's pre-existing first textRun.
 
 
 # ---------------------------------------------------------------------------

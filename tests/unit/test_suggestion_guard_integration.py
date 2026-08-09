@@ -1,15 +1,15 @@
 """Integration tests: the issue #56 suggestion guard fires at EVERY mutating
 tool entry point, before any batchUpdate is sent.
 
-Each of the 7 verified-write pipelines (insert_table, replace_table_row,
+Each of the 8 verified-write pipelines (insert_table, replace_table_row,
 replace_tab_markdown, replace_range_markdown, append_markdown, insert_image,
-replace_text) calls assert_no_pending_suggestions right after resolving the
-target tab body, before any locate()/compile_markdown/request-building. These
-tests exercise each pipeline end-to-end (through the FastMCP client for the
-markdown/text tools, matching test_markdown_tools.py's/test_replace_text.py's
-own harness pattern; directly for the table tools, matching test_tables.py's
-pattern) against a doc whose target tab has a pending suggested insertion,
-and assert:
+replace_text, format_text) calls assert_no_pending_suggestions right after
+resolving the target tab body, before any locate()/compile_markdown/request-
+building. These tests exercise each pipeline end-to-end (through the FastMCP
+client for the markdown/text tools, matching test_markdown_tools.py's/
+test_replace_text.py's own harness pattern; directly for the table tools,
+matching test_tables.py's pattern) against a doc whose target tab has a
+pending suggested insertion, and assert:
 
   1. The call raises SUGGESTIONS_PRESENT.
   2. batchUpdate is never called — the write genuinely never happens, not
@@ -276,6 +276,24 @@ class TestMarkdownAndTextToolsBlockedBySuggestion:
                         "tab_id": "tab-1",
                         "find": "world",
                         "replace": "planet",
+                    },
+                    raise_on_error=False,
+                )
+        assert result.is_error
+        assert "SUGGESTIONS_PRESENT" in str(result.content)
+        mock_service.documents.return_value.batchUpdate.assert_not_called()
+
+    async def test_format_text_raises_and_never_writes(self) -> None:
+        patchers, mock_service = _build_client_mock_env(module="formatting")
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "format_text",
+                    {
+                        "doc_id": "doc-guard-test",
+                        "tab_id": "tab-1",
+                        "find": "world",
+                        "style": {"bold": True},
                     },
                     raise_on_error=False,
                 )

@@ -3,13 +3,13 @@
 <!-- mcp-name: io.github.michaelrobertsutton/verified-googledocs-mcp -->
 
 [![CI](https://github.com/michaelrobertsutton/verified-googledocs-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/michaelrobertsutton/verified-googledocs-mcp/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen.svg)](pyproject.toml)
+[![Coverage](https://img.shields.io/badge/coverage-92%25-brightgreen.svg)](pyproject.toml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 An MCP server for Google Docs whose writes carry proof. Every mutating tool re-reads the affected content from the document after it writes and returns evidence of what actually changed: before/after excerpts, the match count, and the document revision before and after. A tool never reports success for an edit that did not land.
 
-> **Status:** all 19 tools are implemented, covered by an offline unit suite, and exercised against the real Google Docs and Drive APIs by the live test suite. The original fourteen passed the formal [live acceptance gate](docs/acceptance-report.md); the gate is rerun before each release. Install with `uvx verified-googledocs-mcp`. See [Status](#status).
+> **Status:** all 20 tools are implemented, covered by an offline unit suite, and exercised against the real Google Docs and Drive APIs by the live test suite. The original fourteen passed the formal [live acceptance gate](docs/acceptance-report.md); the gate is rerun before each release. Install with `uvx verified-googledocs-mcp`. See [Status](#status).
 
 ## The problem
 
@@ -72,6 +72,7 @@ is responsible for. Every mutating tool also carries `revision_before`,
 | Family | Tools | Proves |
 |--------|-------|--------|
 | **Text edit** | `replace_text` | `match_count` equals `expected_matches`; `rung` names the normalization pass that matched; `before`/`after` are ±200-char excerpts of the edited span, the `after` re-read post-write |
+| **Style edit** | `format_text` | `runs_before`/`runs_after` — the actual `textRun` style flags overlapping each matched span, not a text diff; `content_mutated: false` proven by `compiled_request_kinds` containing only `updateTextStyle`; `style_mutated` false on an idempotent re-run (no write is issued) |
 | **Markdown range** | `replace_range_markdown`, `replace_tab_markdown`, `append_markdown` | `structural_match` (the written markdown round-trips), `input_blocks` vs `post_blocks` counts, and a `structural_diff` list naming any mismatch |
 | **Structural** | `insert_image` | `inline_object_confirmed` — a post-write scan found the inline object at the anchor paragraph |
 | **Comment state** | `add_anchored_comment`, `reply_to_comment`, `resolve_comment` | the re-queried `resolved` flag, `reply_count`, `content`, `quoted_text`, and `author` — a resolve that didn't land returns `COMMENT_STILL_OPEN`, never success |
@@ -86,19 +87,23 @@ nothing in the document changes.
 
 ### Dry run
 
-Seven mutating tools (`replace_text`, `replace_range_markdown`,
+Eight mutating tools (`replace_text`, `format_text`, `replace_range_markdown`,
 `replace_tab_markdown`, `append_markdown`, `insert_image`, `replace_table_row`,
 `insert_table`) accept `dry_run=true`. No API write is issued; the response
 carries `applied: false`, an empty `revision_after` (no write, so no new
 revision), `audit_logged: false`, and — for `replace_text` — a predicted
-`after` excerpt computed by splicing the replacement into the pre-read. For
-`replace_table_row` and `insert_table`, `dry_run` is authoritative for index
-validity: the same assembled request list is index-simulated whether
-`dry_run` is true or false, so a passing dry run always means the real write
-will pass too. Use it to confirm a locate resolves to the right span before
-committing the edit.
+`after` excerpt computed by splicing the replacement into the pre-read, or —
+for `format_text` — a predicted `runs_after` computed by overlaying the
+requested style onto the pre-read runs. `format_text` additionally never
+issues a write at all when the matched text already carries every requested
+style value, dry run or not — that's the tool's normal idempotent no-op path,
+not specific to `dry_run`. For `replace_table_row` and `insert_table`,
+`dry_run` is authoritative for index validity: the same assembled request
+list is index-simulated whether `dry_run` is true or false, so a passing dry
+run always means the real write will pass too. Use it to confirm a locate
+resolves to the right span before committing the edit.
 
-**All seven require a suggestion-free target tab.** Every mutating tool
+**All eight require a suggestion-free target tab.** Every mutating tool
 computes its write indices against a `suggestionsViewMode=PREVIEW_WITHOUT_SUGGESTIONS`
 read, but the actual write always lands in the document's real index space,
 which includes pending suggestions. If the target tab has a pending
@@ -110,7 +115,7 @@ pending suggestion in the Docs UI first, then retry.
 
 ## Tools
 
-Nineteen focused tools, each described by *when* to reach for it, replace the slice of a 150-tool Workspace server that document workflows actually use.
+Twenty focused tools, each described by *when* to reach for it, replace the slice of a 150-tool Workspace server that document workflows actually use.
 
 ### Reading and structure
 | Tool | What it does |
@@ -125,6 +130,7 @@ Nineteen focused tools, each described by *when* to reach for it, replace the sl
 | Tool | What it does |
 |------|--------------|
 | `replace_text` | Find/replace within a tab, with the normalization ladder and match guard |
+| `format_text` | Apply bold/italic/underline to a matched text span via `updateTextStyle` only — no content mutation, safe inside merged-cell tables |
 | `replace_range_markdown` | Replace a section range with markdown |
 | `replace_tab_markdown` | Replace a whole tab's content with markdown |
 | `append_markdown` | Append markdown to a tab |
