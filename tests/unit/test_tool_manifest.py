@@ -14,7 +14,7 @@ from fastmcp import Client
 from verified_googledocs_mcp.middleware import MUTATING_TOOLS
 from verified_googledocs_mcp.server import mcp
 
-# The 19 tools that make up the public surface. Updating this set is a
+# The 20 tools that make up the public surface. Updating this set is a
 # deliberate act: a rename, addition, or removal must be reflected here, which
 # is the point — the test fails loudly when the surface drifts unintentionally.
 EXPECTED_TOOLS = {
@@ -22,6 +22,7 @@ EXPECTED_TOOLS = {
     "list_tabs",
     "find_sections",
     "replace_text",
+    "format_text",
     "replace_range_markdown",
     "replace_tab_markdown",
     "append_markdown",

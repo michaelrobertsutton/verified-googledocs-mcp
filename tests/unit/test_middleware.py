@@ -40,6 +40,9 @@ class TestMutatingToolsRegistry:
     def test_replace_text_in_registry(self) -> None:
         assert "replace_text" in MUTATING_TOOLS
 
+    def test_format_text_in_registry(self) -> None:
+        assert "format_text" in MUTATING_TOOLS
+
     def test_list_tabs_not_in_registry(self) -> None:
         assert "list_tabs" not in MUTATING_TOOLS
 

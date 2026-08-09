@@ -44,6 +44,14 @@ All notable changes to this project are documented here. The format follows
   whole tab as markdown.
 
 ### Added
+- `format_text`: apply bold/italic/underline to a text-matched span via
+  `updateTextStyle` only — no content mutation, so it never destroys a
+  hand-merged table cell the way a markdown rewrite of a table can. Matching
+  reuses `replace_text`'s normalization ladder and match-count guard;
+  verification reports the actual pre/post `textRun` style flags
+  (`runs_before`/`runs_after`), not a text diff, and an idempotent call
+  (style already matches) skips the write entirely rather than bumping the
+  document revision for nothing.
 - Added `VERIFICATION_FAILED` for post-write verification failures.
 - Added `INDEX_SIMULATION_FAILED` for markdown writes whose compiled
   requests would land at an invalid index.

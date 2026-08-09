@@ -88,6 +88,48 @@ class TestReadTab:
         assert isinstance(result.content, dict)
         assert "paragraphs" in result.content
 
+    def test_read_tab_structured_format_exposes_underline(self) -> None:
+        """format_text (#63) needs a read path that can confirm underline
+        independently, alongside the pre-existing bold/italic."""
+        doc = {
+            "documentId": "doc-underline",
+            "revisionId": "rev-1",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "tab-1", "title": "Tab", "index": 0},
+                    "documentTab": {
+                        "body": {
+                            "content": [
+                                {
+                                    "startIndex": 1,
+                                    "endIndex": 13,
+                                    "paragraph": {
+                                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                                        "elements": [
+                                            {
+                                                "startIndex": 1,
+                                                "endIndex": 13,
+                                                "textRun": {
+                                                    "content": "underlined\n",
+                                                    "textStyle": {"underline": True},
+                                                },
+                                            }
+                                        ],
+                                    },
+                                }
+                            ]
+                        }
+                    },
+                    "childTabs": [],
+                }
+            ],
+        }
+        result = read_tab(doc, "doc-underline", "tab-1", format="structured")
+        run = result.content["paragraphs"][0]["runs"][0]
+        assert run["underline"] is True
+        assert run["bold"] is False
+        assert run["italic"] is False
+
     def test_read_tab_revision_id_stamped(self) -> None:
         doc = multi_tab_doc()
         result = read_tab(doc, "doc-multi-tab", "tab-1")
