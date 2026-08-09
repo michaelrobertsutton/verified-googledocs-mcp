@@ -66,13 +66,36 @@ Override the fixture document with `VERIFIED_GOOGLEDOCS_MCP_TEST_DOC=<doc_id>`.
 matrix; rerun this suite before release when the tool surface or error-code
 matrix changes.
 
-**2026-08-09**, after adding `format_text` (#63): full `pytest --run-live` →
-89 passed, 2 failed. Both failures are pre-existing fixture drift on the
-canonical doc, unrelated to `format_text` — `test_replace_text.py`'s NBSP
-rung test finds `exact` instead of `nbsp_whitespace_runs` (the seeded NBSP
-character in the canonical doc's hazard text appears to have been lost) and
-`test_comments.py`'s suggestions test can no longer find the seeded
-suggestion — suggestions are lost on any fixture re-copy or manual edit and
-need re-seeding via the Docs UI, a known hazard of this canonical fixture.
-Neither failure touches code this PR changed. All 9 `test_format_text.py`
-tests pass.
+**2026-08-09**, after adding `format_text` (#63): full run → 89 passed,
+2 failed. Both failures were pre-existing fixture drift on the canonical doc,
+unrelated to `format_text` — the NBSP rung test found `exact` instead of
+`nbsp_whitespace_runs`, and the suggestions test could not find the seeded
+suggestions. All 9 `test_format_text.py` tests passed.
+
+**2026-08-09, both addressed before the v0.2.0 release.** The two failure
+modes are not the same kind of problem, so they got different fixes:
+
+- **NBSP** — an NBSP *is* writable through the REST API, so the suite no
+  longer depends on the character surviving. `conftest.py`'s
+  `_ensure_nbsp_hazard` checks the hazard paragraph when the session starts
+  and restores U+00A0 if it has been flattened. Verified by deliberately
+  re-flattening the character and confirming a run repaired it and passed.
+  This drift had already happened twice (2026-07-22, 2026-08-09).
+- **Suggestions** — genuinely not automatable. `documents.batchUpdate` takes
+  only `requests` + `writeControl`, and none of its 40 request types create a
+  suggestion; every `Suggested*` / `*SuggestionState` schema is a read shape
+  (checked against discovery revision 20260803). Seeding stays manual, so the
+  test now **skips with an actionable message** when the fixture carries no
+  suggestions, instead of failing the release gate for a fixture defect. If
+  suggestions *are* present but the seeded ids are missing, it still fails —
+  that case is a real regression or stale constants. Parsing is covered
+  offline by `tests/unit/test_suggestions.py`.
+
+Baseline after both fixes: **90 passed, 1 skipped** (the skip is the
+suggestions test above, and stays until the fixture is re-seeded by hand).
+That is the expected shape of a green run — a *failure* here is a real signal.
+
+**Invocation note:** run this suite as `pytest tests/live --run-live`. A bare
+`pytest --run-live` fails with "unrecognized arguments" — the flag is
+registered in `tests/live/conftest.py`, which pytest loads too late for
+argument parsing unless the path is passed explicitly.

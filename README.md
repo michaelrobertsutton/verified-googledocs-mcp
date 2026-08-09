@@ -166,6 +166,7 @@ Built incrementally; each tool ships with its verification and tests rather than
 | Comment tools + `list_open_items` | done |
 | Markdown write tools + `diff_tab_vs_file` | done |
 | Table tools (`list_tables`, `get_table`, `replace_table_row`, `insert_table`) + `export_pdf` | done; ships in `0.2.0` |
+| `format_text` (style-only verified edit) | done; ships in `0.2.0` |
 | Live acceptance gate | done for the initial release — [report](docs/acceptance-report.md); rerun before release |
 | PyPI packaging + publish workflow | done; first release `v0.1.0` |
 | MCP registry listing | published with `v0.1.0` |
@@ -310,7 +311,7 @@ uv run --extra dev ruff format src tests  # format
 uv run --extra dev mypy src               # type check
 ```
 
-Unit tests run against synthetic Docs API fixtures and an in-memory MCP client, so the full suite is offline (it never runs the live tests). The live acceptance suite (under `tests/live/`) runs with `pytest --run-live` against a real scratch document and needs OAuth credentials; it is the pre-release gate and never runs in CI — see [`docs/acceptance-report.md`](docs/acceptance-report.md).
+Unit tests run against synthetic Docs API fixtures and an in-memory MCP client, so the full suite is offline (it never runs the live tests). The live acceptance suite (under `tests/live/`) runs with `pytest tests/live --run-live` against a real scratch document and needs OAuth credentials; it is the pre-release gate and never runs in CI — see [`docs/acceptance-report.md`](docs/acceptance-report.md).
 
 See [`docs/architecture.md`](docs/architecture.md) for the module map and the verification pipeline, [`PRD.md`](docs/PRD.md) for the full specification, [`docs/cutover.md`](docs/cutover.md) to migrate off a general Workspace MCP server, and [`CONTRIBUTING.md`](CONTRIBUTING.md) to build on it.
 

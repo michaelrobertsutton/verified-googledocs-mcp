@@ -9,7 +9,7 @@ fixtures.
 |---|---|
 | **Fixture document** | `1Zm_6bAwA7UH1DKkGVL3kg9XcQ6rIZHmUFcQPTcoJb6Y` (seeded in #1, extended in #31 with a HEADING_1 and a nested tab) |
 | **Suite** | `tests/live/` — driven by the in-memory FastMCP `Client(mcp)`, so tool registration and the evidence-enforcement middleware run on the path out to the live API |
-| **How to run** | `pytest --run-live` (requires OAuth credentials; never runs in CI) |
+| **How to run** | `pytest tests/live --run-live` (requires OAuth credentials; never runs in CI) |
 | **Result** | **57 passed, 0 xfailed — gate MET ✅** |
 
 Status legend: **live** (proven directly against the API) · **sim** (proven via

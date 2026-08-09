@@ -44,6 +44,10 @@ All notable changes to this project are documented here. The format follows
 - `read_document` gains `format="outline"`: headings only (level, text,
   position), for callers that only need geometry and don't want to pull a
   whole tab as markdown.
+- The sdist now ships an explicit file allowlist (`src`, `tests`, `docs`,
+  `scripts`, and the top-level metadata files) rather than whatever the build
+  machine happens to have on disk, so the tarball is byte-identical no matter
+  who builds it. Previously only the wheel had explicit contents.
 
 ### Added
 - `format_text`: apply bold/italic/underline to a text-matched span via

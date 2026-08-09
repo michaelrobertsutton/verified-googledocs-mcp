@@ -21,8 +21,10 @@ Fixture document
 Defaults to the seeded scratch doc from issue #1; override with the env var
 ``VERIFIED_GOOGLEDOCS_MCP_TEST_DOC``. Read-only checks (suggestions, the seeded
 comment thread) run against this canonical doc. Mutating checks run against a
-disposable ``files.copy`` of it that is hard-deleted on teardown, so the
-canonical fixture is never modified.
+disposable ``files.copy`` of it that is hard-deleted on teardown, so no *test*
+modifies the canonical fixture. The one exception is ``_ensure_nbsp_hazard``,
+which repairs the NBSP hazard character if it has been flattened — a
+precondition repair, not a test mutation.
 
 Audit-log isolation
 --------------------
@@ -34,6 +36,7 @@ The same fixture allows ``diff_tab_vs_file`` to read only that per-test tmp dir.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -50,6 +53,41 @@ DEFAULT_DOC_ID = "1VMCODszIWJ5MJyRbU2dkzxLLEwrMxWogyh7bS5tE-FQ"
 CANONICAL_HEADING_TEXT = "Text Hazards"  # HEADING_1 in t.0, resolves to range [1, 14)
 CANONICAL_TAB2_ID = "t.ez9l4xnkkmue"  # "Unicode Hazards", second top-level tab
 CANONICAL_NESTED_TAB_ID = "t.e9j0c3yhe3v8"  # "Nested Tab", child of t.0
+
+# The NBSP hazard paragraph is load-bearing: it is the only thing that drives
+# test_replace_text.py's ``nbsp_whitespace_runs`` rung. Twice now (2026-07-22,
+# 2026-08-09) something outside this suite has flattened that U+00A0 to a plain
+# space, which fails the release gate for a fixture defect rather than a code
+# defect. Unlike suggestions, an NBSP *is* writable through the REST API, so the
+# suite restores its own precondition instead of reporting rot as a regression.
+NBSP_HAZARD_PLAIN = "before after"
+# Written as an escape, not a literal: an invisible NBSP in source is exactly
+# what rots without anyone noticing.
+NBSP_HAZARD_SEEDED = "before\u00a0after"
+
+
+def _ensure_nbsp_hazard(docs: Any, doc_id: str) -> None:
+    """Restore the hazard paragraph's NBSP if it has been flattened."""
+    from verified_googledocs_mcp.docs import fetch_document
+
+    blob = json.dumps(fetch_document(docs, doc_id), ensure_ascii=False)
+    if NBSP_HAZARD_SEEDED in blob or NBSP_HAZARD_PLAIN not in blob:
+        # Already seeded, or the paragraph is gone entirely — the latter is a
+        # different failure and belongs to the test that depends on it.
+        return
+    docs.documents().batchUpdate(
+        documentId=doc_id,
+        body={
+            "requests": [
+                {
+                    "replaceAllText": {
+                        "containsText": {"text": NBSP_HAZARD_PLAIN, "matchCase": True},
+                        "replaceText": NBSP_HAZARD_SEEDED,
+                    }
+                }
+            ]
+        },
+    ).execute()
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +145,7 @@ def canonical_doc_id(live_services: tuple[Any, Any]) -> str:
         fetch_document(docs, doc_id)
     except Exception as exc:  # noqa: BLE001
         pytest.skip(f"fixture doc {doc_id!r} not reachable: {exc}")
+    _ensure_nbsp_hazard(docs, doc_id)
     return doc_id
 
 

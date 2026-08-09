@@ -56,6 +56,30 @@ verified-googledocs-mcp = "verified_googledocs_mcp.server:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/verified_googledocs_mcp"]
 
+# Explicit allowlist, not a denylist: anything not named here stays out of the
+# tarball, so a tool directory added tomorrow is excluded by default rather
+# than shipped by accident.
+#
+# This matters because local-only tooling is excluded from git via
+# .git/info/exclude, which hatchling does not read — it packs whatever is on
+# disk and not in .gitignore. CI publishes from a clean checkout that never
+# had those files, so nothing has ever leaked; this makes the sdist identical
+# no matter who runs the build.
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/tests",
+  "/docs",
+  "/scripts",
+  "/README.md",
+  "/CHANGELOG.md",
+  "/CONTRIBUTING.md",
+  "/LICENSE",
+  "/pyproject.toml",
+  "/server.json",
+  "/uv.lock",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
