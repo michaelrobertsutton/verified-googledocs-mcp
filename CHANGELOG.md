@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-09
+
 ### Fixed
 - Markdown tables no longer 400 on write via `replace_tab_markdown` or
   `replace_range_markdown`. The compiler's cell-index formula was off by two
@@ -98,5 +100,6 @@ First public release.
   `server.json` for the MCP registry, and a migration guide (`docs/cutover.md`).
 - CI: ruff, mypy, and pytest on every push and pull request.
 
-[Unreleased]: https://github.com/michaelrobertsutton/verified-googledocs-mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/michaelrobertsutton/verified-googledocs-mcp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/michaelrobertsutton/verified-googledocs-mcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/michaelrobertsutton/verified-googledocs-mcp/releases/tag/v0.1.0
