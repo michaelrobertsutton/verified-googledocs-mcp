@@ -84,6 +84,131 @@ class TestLists:
         assert "- Second item" in md
 
 
+def _list_item_para(text: str, list_id: str = "list-1", level: int = 0) -> dict:
+    """A list-item paragraph, matching the live API's real shape (issue #65):
+    ``bullet`` carries only ``listId``/``nestingLevel``, never a glyph type —
+    ``nestingLevel`` is simply omitted at level 0, confirmed live."""
+    bullet: dict = {"listId": list_id}
+    if level:
+        bullet["nestingLevel"] = level
+    return {
+        "paragraph": {
+            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            "bullet": bullet,
+            "elements": [{"textRun": {"content": text + "\n"}}],
+        }
+    }
+
+
+def _ordered_lists_map(list_id: str = "list-1", depth: int = 3) -> dict:
+    """A lists map for the NUMBERED_DECIMAL_ALPHA_ROMAN preset, matching the
+    live cycle confirmed by TestBulletNestingProbe: DECIMAL/ALPHA/ROMAN."""
+    cycle = ("DECIMAL", "ALPHA", "ROMAN")
+    return {
+        list_id: {
+            "listProperties": {"nestingLevels": [{"glyphType": cycle[i % 3]} for i in range(depth)]}
+        }
+    }
+
+
+def _unordered_lists_map(list_id: str = "list-1", depth: int = 3) -> dict:
+    """A lists map for the BULLET_DISC_CIRCLE_SQUARE preset — glyphSymbol,
+    never glyphType, matching the live cycle confirmed by TestBulletNestingProbe."""
+    cycle = ("●", "○", "■")  # ● ○ ■
+    return {
+        list_id: {
+            "listProperties": {
+                "nestingLevels": [{"glyphSymbol": cycle[i % 3]} for i in range(depth)]
+            }
+        }
+    }
+
+
+class TestOrderedLists:
+    """Reader-side fix for issue #65: ordered vs unordered and nesting are
+    read from the tab's ``lists`` map, never from ``bullet`` itself."""
+
+    def test_ordered_list_items_render_with_number_markers(self) -> None:
+        body = {"content": [_list_item_para("First"), _list_item_para("Second")]}
+        md, _ = to_markdown(body, lists=_ordered_lists_map())
+        assert md == "1. First\n2. Second\n"
+
+    def test_missing_lists_map_falls_back_to_unordered(self) -> None:
+        # No lists= passed at all — the pre-#65 behaviour, preserved as the
+        # safe default rather than guessing.
+        body = {"content": [_list_item_para("Item")]}
+        md, _ = to_markdown(body)
+        assert md == "- Item\n"
+
+    def test_level_beyond_defined_nesting_levels_falls_back_to_unordered(self) -> None:
+        body = {"content": [_list_item_para("Deep", level=5)]}
+        lists = _ordered_lists_map(depth=2)  # only levels 0-1 defined
+        md, _ = to_markdown(body, lists=lists)
+        assert md.strip().endswith("- Deep")
+
+    def test_different_list_id_at_same_level_starts_fresh_counter(self) -> None:
+        body = {
+            "content": [
+                _list_item_para("A1", list_id="list-1", level=0),
+                _list_item_para("A2", list_id="list-1", level=0),
+                _list_item_para("B1", list_id="list-2", level=0),
+            ]
+        }
+        lists = {**_ordered_lists_map("list-1"), **_ordered_lists_map("list-2")}
+        md, _ = to_markdown(body, lists=lists)
+        assert md == "1. A1\n2. A2\n1. B1\n"
+
+    def test_ordered_nested_indent_matches_parent_marker_width(self) -> None:
+        # After "1. " (3 chars), the child must indent by exactly 3 spaces —
+        # not a fixed "  " * nesting — or it would not re-parse as nested.
+        body = {
+            "content": [
+                _list_item_para("Parent", level=0),
+                _list_item_para("Child", level=1),
+            ]
+        }
+        md, _ = to_markdown(body, lists=_ordered_lists_map())
+        assert md == "1. Parent\n   1. Child\n"
+
+    def test_unordered_nested_indent_matches_parent_marker_width(self) -> None:
+        # After "- " (2 chars), the child indents by exactly 2 spaces.
+        body = {
+            "content": [
+                _list_item_para("Parent", level=0),
+                _list_item_para("Child", level=1),
+            ]
+        }
+        md, _ = to_markdown(body, lists=_unordered_lists_map())
+        assert md == "- Parent\n  - Child\n"
+
+    def test_ordered_list_counter_resumes_at_same_level_after_a_deeper_item(self) -> None:
+        body = {
+            "content": [
+                _list_item_para("First", level=0),
+                _list_item_para("Sub A", level=1),
+                _list_item_para("Second", level=0),
+            ]
+        }
+        md, _ = to_markdown(body, lists=_ordered_lists_map())
+        assert md == "1. First\n   1. Sub A\n2. Second\n"
+
+    def test_ordered_list_child_counter_restarts_under_a_new_parent(self) -> None:
+        # Each parent's children are their own group and restart at 1 — this
+        # is what makes diff_tab_vs_file agree with a hand-written source
+        # file, which would restart nested numbering the same way.
+        body = {
+            "content": [
+                _list_item_para("First", level=0),
+                _list_item_para("Sub A", level=1),
+                _list_item_para("Sub B", level=1),
+                _list_item_para("Second", level=0),
+                _list_item_para("Sub C", level=1),
+            ]
+        }
+        md, _ = to_markdown(body, lists=_ordered_lists_map())
+        assert md == ("1. First\n   1. Sub A\n   2. Sub B\n2. Second\n   1. Sub C\n")
+
+
 def _normal_para(text: str) -> dict:
     return {
         "paragraph": {

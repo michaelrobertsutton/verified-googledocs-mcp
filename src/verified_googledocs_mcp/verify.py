@@ -62,6 +62,7 @@ class ErrorCode(Enum):
     SUGGESTIONS_PRESENT = "SUGGESTIONS_PRESENT"
     INVALID_RANGE = "INVALID_RANGE"
     INDEX_MODEL_DIVERGENCE = "INDEX_MODEL_DIVERGENCE"
+    STRUCTURE_PREDICTION_FAILED = "STRUCTURE_PREDICTION_FAILED"
 
 
 # Which codes signal a transient condition worth retrying.
@@ -953,27 +954,42 @@ def append_audit(
 # ---------------------------------------------------------------------------
 
 
+def _normalize_block_text(text: str) -> str:
+    """Normalize text for block-structural comparison: de-escape backslash
+    escapes, collapse whitespace runs to a single space, strip ends.
+
+    Shared by ``_parse_markdown_blocks`` (parsing the input markdown) and
+    ``predict_blocks`` (predicting the compiled requests' own output), so
+    the two sides of every structural comparison apply the exact same
+    normalization and can never silently disagree over whitespace.
+    """
+    text = re.sub(r"\\(.)", r"\1", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
     """Parse markdown into a list of block descriptors for structural comparison.
 
     Returns a list of dicts, each describing a block:
-        {type, level?, text?, rows?, cols?, cells?, nesting?, link_targets}
+        {type, level?, text?, rows?, cols?, cells?, nesting?, ordered?, link_targets}
 
     Accepted lossy transforms — differences treated as equivalent:
     - Whitespace runs: normalized to single space
-    - Bullet-marker style: '-'/'*'/'1.' are all list_item type
+    - Bullet-marker style: '-'/'*' are both unordered list_item; '1.'/'2.'/...
+      are all ordered list_item regardless of the literal number written
+      (issue #65: ordered numbering is reconstructed sequentially on read,
+      not stored as text, so the written number is never compared)
     - Table alignment / separator formatting: all equivalent
     - Trailing newlines: stripped from text values
     - Markdown escaping: backslash-escaped chars treated as their plain form
     - Read-side placeholders: [image:...], [chip:...], [footnote:...] appear
       as text in the output and count as paragraph text nodes
 
-    The comparison is pragmatic: block kinds + heading levels + table dimensions
-    + link targets + text content modulo the accepted transforms.  A naive text
-    diff would fail every write due to the above transforms.
+    The comparison is pragmatic: block kinds + heading levels + table
+    dimensions + list nesting/ordered-ness + link targets + text content
+    modulo the accepted transforms. A naive text diff would fail every
+    write due to the above transforms.
     """
-    import re as _re
-
     from markdown_it import MarkdownIt
     from markdown_it.tree import SyntaxTreeNode
 
@@ -985,10 +1001,7 @@ def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
     tree = SyntaxTreeNode(tokens)
 
     blocks: list[dict[str, Any]] = []
-
-    def _norm(text: str) -> str:
-        text = _re.sub(r"\\(.)", r"\1", text)
-        return _re.sub(r"\s+", " ", text).strip()
+    _norm = _normalize_block_text
 
     def _links(node: Any) -> list[str]:
         targets: list[str] = []
@@ -1031,7 +1044,7 @@ def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
                             targets.extend(_links(cell))
         return rows, max_cols, targets, cells
 
-    def _list_items(node: Any, nesting: int) -> None:
+    def _list_items(node: Any, nesting: int, ordered: bool) -> None:
         for item in node.children:
             if item.type == "list_item":
                 for child in item.children:
@@ -1040,12 +1053,13 @@ def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
                             {
                                 "type": "list_item",
                                 "nesting": nesting,
+                                "ordered": ordered,
                                 "text": _norm(_inline_text(child)),
                                 "link_targets": _links(child),
                             }
                         )
                     elif child.type in ("bullet_list", "ordered_list"):
-                        _list_items(child, nesting + 1)
+                        _list_items(child, nesting + 1, ordered=(child.type == "ordered_list"))
 
     def _walk(node: Any) -> None:
         for child in node.children:
@@ -1069,7 +1083,7 @@ def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
                     }
                 )
             elif t in ("bullet_list", "ordered_list"):
-                _list_items(child, 0)
+                _list_items(child, 0, ordered=(t == "ordered_list"))
             elif t == "table":
                 r, c, lts, cells = _table_dims(child)
                 blocks.append(
@@ -1079,6 +1093,276 @@ def _parse_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
                 _walk(child)
 
     _walk(tree)
+    return blocks
+
+
+def predict_blocks(requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Predict the block structure *requests* will produce, reasoning only
+    about the requests' own effects on an otherwise-empty segment.
+
+    *requests* must be ``compile_markdown``'s own output — never the fully
+    assembled batch with a ``deleteContentRange`` or an append's leading
+    newline prefix — since predicting those would require a real body model
+    this function deliberately doesn't have (see "Deliberately not..."
+    below).
+
+    Returns the same block-descriptor shape ``_parse_markdown_blocks``
+    produces — ``{type, level?, text?, rows?, cols?, cells?, nesting?,
+    ordered?, link_targets}`` — so it can be compared against
+    ``_parse_markdown_blocks(markdown)`` with ``_blocks_structurally_equal``.
+    This is the pre-flight half of issue #65's defect 2: a compiler bug
+    where the *internal* model said one thing (e.g. ``nesting=1``) but the
+    *emitted requests* encoded another (``nesting=0``) shows up here,
+    because this function only ever looks at the requests themselves —
+    never at the compiler's internal state — mirroring exactly the
+    divergence that caused the bug:
+
+    - Paragraph/heading/list-item boundaries come from splitting
+      ``insertText`` requests (outside any table) on ``"\\n"``, in ascending
+      index order — table-cell inserts are excluded first (see below), so
+      table content is never merged into the surrounding paragraph text.
+    - A chunk is a heading if its span falls inside an
+      ``updateParagraphStyle`` range naming ``HEADING_N``.
+    - A chunk is a list item if its span falls inside a
+      ``createParagraphBullets`` range; its nesting level is the count of
+      leading tab characters (the exact mechanism ``createParagraphBullets``
+      itself uses — confirmed live), and ``ordered`` comes from that
+      request's own ``bulletPreset``.
+    - Tables come from ``insertTable`` requests; each cell's text is
+      reassembled from its own ``insertText`` requests (matched by index
+      against ``_table_cell_index`` for that table — table cells are
+      inserted in *reverse*, highest index first, by ``_visit_table``, so
+      matching by index rather than by request order is required), and
+      interleaved with paragraph/heading/list-item chunks by comparing each
+      table's own ``insertTable`` location against chunk start indices.
+    - Link targets come from ``updateTextStyle`` requests carrying a
+      ``textStyle.link.url``, attributed to whichever chunk or cell span
+      contains them.
+
+    Deliberately not a full synthetic-body renderer: it models only the
+    request shapes ``compile_markdown`` actually emits, assuming no
+    pre-existing content and no deletes. A full renderer's failure mode is
+    refusing valid writes; this narrower model's is missing some real
+    failures — the ``write_status``/``retry_safe`` evidence fields remain
+    the safety net for whatever this doesn't catch.
+    """
+    from .markdown_writer import _table_cell_index, _utf16_len
+
+    # --- Tables: map every cell's own insertText index to (table, row, col)
+    table_cell_lookup: dict[int, tuple[int, int, int]] = {}
+    tables_meta: list[dict[str, Any]] = []
+    for req in requests:
+        if "insertTable" not in req:
+            continue
+        body = req["insertTable"]
+        n_rows, n_cols = body["rows"], body["columns"]
+        table_start = body["location"]["index"] + 1
+        table_idx = len(tables_meta)
+        for r_idx in range(n_rows):
+            for c_idx in range(n_cols):
+                cell_idx = _table_cell_index(table_start, n_cols, r_idx, c_idx)
+                table_cell_lookup[cell_idx] = (table_idx, r_idx, c_idx)
+        tables_meta.append(
+            {
+                "location": body["location"]["index"],
+                "rows": n_rows,
+                "cols": n_cols,
+                "cell_text": [["" for _ in range(n_cols)] for _ in range(n_rows)],
+                "cell_span": [[None for _ in range(n_cols)] for _ in range(n_rows)],
+            }
+        )
+
+    # --- Link spans: updateTextStyle requests carrying a link URL ---
+    link_spans: list[tuple[int, int, str]] = []
+    for req in requests:
+        if "updateTextStyle" not in req:
+            continue
+        style = req["updateTextStyle"]
+        url = style.get("textStyle", {}).get("link", {}).get("url")
+        if not url:
+            continue
+        rng = style["range"]
+        link_spans.append((rng["startIndex"], rng["endIndex"], url))
+
+    def _links_in(start: int, end: int) -> list[str]:
+        return [url for s, e, url in link_spans if s < end and e > start]
+
+    # --- Heading ranges: updateParagraphStyle requests naming HEADING_N ---
+    heading_ranges: list[tuple[int, int, int]] = []
+    for req in requests:
+        if "updateParagraphStyle" not in req:
+            continue
+        style = req["updateParagraphStyle"]
+        named = style.get("paragraphStyle", {}).get("namedStyleType", "")
+        if not named.startswith("HEADING_"):
+            continue
+        rng = style["range"]
+        try:
+            level = int(named.rsplit("_", 1)[-1])
+        except ValueError:
+            continue
+        heading_ranges.append((rng["startIndex"], rng["endIndex"], level))
+
+    def _heading_level_at(start: int, end: int) -> int | None:
+        for s, e, level in heading_ranges:
+            if s <= start and end <= e:
+                return level
+        return None
+
+    # --- Bullet ranges: createParagraphBullets requests ---
+    bullet_ranges: list[tuple[int, int, bool]] = []
+    for req in requests:
+        if "createParagraphBullets" not in req:
+            continue
+        body = req["createParagraphBullets"]
+        rng = body["range"]
+        ordered = body.get("bulletPreset") == "NUMBERED_DECIMAL_ALPHA_ROMAN"
+        bullet_ranges.append((rng["startIndex"], rng["endIndex"], ordered))
+
+    def _ordered_at(start: int, end: int) -> bool | None:
+        for s, e, ordered in bullet_ranges:
+            if s <= start and end <= e:
+                return ordered
+        return None
+
+    # --- Populate table cells from their own insertText requests, and
+    # collect every OTHER insertText into the "trunk" — the flowing
+    # document text outside any table — for paragraph/heading/list-item
+    # reconstruction. ---
+    trunk_inserts: list[tuple[int, int, str]] = []
+    for req in requests:
+        if "insertText" not in req:
+            continue
+        body = req["insertText"]
+        idx = body["location"]["index"]
+        text = body["text"]
+        end = idx + _utf16_len(text)
+        cell = table_cell_lookup.get(idx)
+        if cell is not None:
+            table_idx, r_idx, c_idx = cell
+            meta = tables_meta[table_idx]
+            meta["cell_text"][r_idx][c_idx] += text
+            prior = meta["cell_span"][r_idx][c_idx]
+            meta["cell_span"][r_idx][c_idx] = (
+                (min(prior[0], idx), max(prior[1], end)) if prior else (idx, end)
+            )
+            continue
+        trunk_inserts.append((idx, end, text))
+    trunk_inserts.sort(key=lambda t: t[0])
+
+    # --- Split the trunk into maximal contiguous runs — a run breaks only
+    # where a table interrupts the flowing text (every insertText within a
+    # run is back-to-back by construction: each advances the compiler's
+    # cursor to exactly the next request's location) — then split each run
+    # on "\n" to recover paragraph/heading/list-item boundaries and their
+    # absolute start indices.
+    runs: list[list[tuple[int, int, str]]] = []
+    for seg in trunk_inserts:
+        if runs and runs[-1][-1][1] == seg[0]:
+            runs[-1].append(seg)
+        else:
+            runs.append([seg])
+
+    chunks: list[tuple[int, int, str]] = []
+    for run in runs:
+        cursor = run[0][0]
+        run_text = "".join(text for _s, _e, text in run)
+        pieces = run_text.split("\n")
+        for i, piece in enumerate(pieces):
+            piece_len = _utf16_len(piece)
+            start, end = cursor, cursor + piece_len
+            cursor = end + 1  # +1 for the "\n" this split consumed
+            if i == len(pieces) - 1 and piece == "":
+                continue  # trailing empty split after the run's final "\n"
+            chunks.append((start, end, piece))
+
+    # --- Emit blocks in document order: tables interleaved with
+    # paragraph/heading/list-item chunks by comparing each table's own
+    # insertTable location against chunk start indices. ---
+    table_order = sorted(range(len(tables_meta)), key=lambda i: tables_meta[i]["location"])
+    next_table = 0
+    blocks: list[dict[str, Any]] = []
+
+    def _emit_table(table_idx: int) -> None:
+        meta = tables_meta[table_idx]
+        cells = [[_normalize_block_text(c) for c in row] for row in meta["cell_text"]]
+        # Style/link updateTextStyle ranges targeting a table cell are
+        # expressed in the POST-INSERT-SHIFT coordinate space, not the
+        # static per-cell position cell_span records: _visit_table inserts
+        # cell text highest-index first, so once a lower-index cell's text
+        # is inserted it shifts every already-inserted higher-index cell's
+        # text (and thus its style/link ranges) forward by its own length.
+        # Reproduce that exact cumulative shift here, in the same ascending
+        # row-major order _visit_table itself accumulates it in, before
+        # checking for links — otherwise a higher-index cell's link would
+        # never be found at its unshifted static span.
+        link_targets: list[str] = []
+        shift = 0
+        for row_spans in meta["cell_span"]:
+            for span in row_spans:
+                if span is None:
+                    continue
+                static_start, static_end = span
+                link_targets.extend(_links_in(static_start + shift, static_end + shift))
+                shift += static_end - static_start
+        blocks.append(
+            {
+                "type": "table",
+                "rows": meta["rows"],
+                "cols": meta["cols"],
+                "cells": cells,
+                "link_targets": link_targets,
+            }
+        )
+
+    def _flush_tables_before(pos: int) -> None:
+        nonlocal next_table
+        while (
+            next_table < len(table_order) and tables_meta[table_order[next_table]]["location"] < pos
+        ):
+            _emit_table(table_order[next_table])
+            next_table += 1
+
+    for start, end, raw_text in chunks:
+        _flush_tables_before(start)
+
+        ordered = _ordered_at(start, end)
+        heading_level = _heading_level_at(start, end)
+
+        if ordered is not None:
+            nesting = len(raw_text) - len(raw_text.lstrip("\t"))
+            text = raw_text.lstrip("\t")
+            blocks.append(
+                {
+                    "type": "list_item",
+                    "nesting": nesting,
+                    "ordered": ordered,
+                    "text": _normalize_block_text(text),
+                    "link_targets": _links_in(start, end),
+                }
+            )
+        elif heading_level is not None:
+            blocks.append(
+                {
+                    "type": "heading",
+                    "level": heading_level,
+                    "text": _normalize_block_text(raw_text),
+                    "link_targets": _links_in(start, end),
+                }
+            )
+        elif raw_text != "":
+            blocks.append(
+                {
+                    "type": "paragraph",
+                    "text": _normalize_block_text(raw_text),
+                    "link_targets": _links_in(start, end),
+                }
+            )
+
+    while next_table < len(table_order):
+        _emit_table(table_order[next_table])
+        next_table += 1
+
     return blocks
 
 
@@ -1093,6 +1377,7 @@ def assemble_range_markdown_evidence(
     applied: bool,
     audit_logged: bool,
     audit_log_reason: str = "",
+    post_lists: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble range/markdown evidence after a markdown write.
 
@@ -1100,6 +1385,14 @@ def assemble_range_markdown_evidence(
     elements from the post-read body whose indices overlap [start_index,
     end_index), converts to markdown via to_markdown(), parses both sides
     with markdown-it-py, and structurally compares them.
+
+    post_lists: the tab's ``lists`` map from the post-write read (see
+    ``docs._find_tab_lists``), passed through unsliced — list definitions
+    are tab-scoped, not range-scoped, so a list item inside the sliced range
+    still resolves against the full tab's lists. Without it, every list in
+    the re-exported markdown reads as unordered, which would make an
+    ordered-list write's structural comparison fail for the wrong reason
+    (issue #65).
 
     Accepted lossy transforms (enumerated in _parse_markdown_blocks docstring).
 
@@ -1118,7 +1411,7 @@ def assemble_range_markdown_evidence(
         if not (elem.get("endIndex", 0) <= start_index or elem.get("startIndex", 0) >= end_index)
     ]
     range_body = {"content": sliced_content}
-    post_md, _ = to_markdown(range_body)
+    post_md, _ = to_markdown(range_body, lists=post_lists)
 
     input_blocks = _parse_markdown_blocks(input_markdown)
     post_blocks = _parse_markdown_blocks(post_md)
@@ -1153,13 +1446,27 @@ def _blocks_structurally_equal(a: dict[str, Any], b: dict[str, Any]) -> bool:
     """Return True if two block descriptors are structurally equivalent."""
     if a["type"] != b["type"]:
         return False
+    # Every block type carries link_targets (issue #65 follow-up): this was
+    # recorded by _parse_markdown_blocks but never compared, so a write that
+    # dropped or mangled a hyperlink's URL — while leaving the anchor text
+    # untouched — still reported structural_match: true. Checked once, here,
+    # rather than per-branch, so headings/paragraphs/tables get the same
+    # protection as list items.
+    if a.get("link_targets") != b.get("link_targets"):
+        return False
     t = a["type"]
     if t == "heading":
         return a["level"] == b["level"] and a["text"] == b["text"]
     if t == "paragraph":
         return a["text"] == b["text"]
     if t == "list_item":
-        return a["nesting"] == b["nesting"] and a["text"] == b["text"]
+        # ordered vs unordered (issue #65): a numbered list that came back
+        # as bullets — or vice versa — must not read as a structural match.
+        return (
+            a["nesting"] == b["nesting"]
+            and a.get("ordered") == b.get("ordered")
+            and a["text"] == b["text"]
+        )
     if t == "table":
         # Compare cell contents too, not just dimensions — a table with the
         # right shape but wrong/missing cell text must not read as a match.

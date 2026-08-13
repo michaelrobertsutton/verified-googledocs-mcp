@@ -20,6 +20,7 @@ from tests.unit.fixtures.markdown_tools import (
     doc_with_chip,
     doc_with_footnote,
     doc_with_image,
+    doc_with_mixed_lists_and_table,
     simple_markdown_doc,
     doc_with_heading_and_table,
     doc_with_table_cell_image,
@@ -153,6 +154,10 @@ class TestReplaceRangeMarkdown:
         assert "revision_before" in data
         assert "revision_after" in data
         assert "audit_logged" in data
+        # issue #65: an honest success is distinguishable from a landed-but
+        # -unverified write on one field, not just by the absence of a flag.
+        assert data["write_status"] == "written_verified"
+        assert data["retry_safe"] is True
 
     @pytest.mark.asyncio
     async def test_stale_range_returns_error(self) -> None:
@@ -361,6 +366,8 @@ class TestReplaceRangeMarkdown:
         data = result.data
         assert data["applied"] is False
         assert "planned_requests" in data
+        assert data["write_status"] == "not_written"
+        assert data["retry_safe"] is True
 
     @pytest.mark.asyncio
     async def test_tab_not_found_returns_error(self) -> None:
@@ -418,6 +425,11 @@ class TestReplaceRangeMarkdown:
         # document was in fact mutated and has no automatic rollback.
         assert evidence["document_mutated"] is True
         assert evidence["needs_manual_restore"] is True
+        # issue #65: the shared _raise_post_write_verification_failure helper
+        # gives every verified-write tool this field, not just the markdown
+        # ones — a caller must not retry a mutation it can't confirm landed.
+        assert evidence["write_status"] == "written_unverified"
+        assert evidence["retry_safe"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -446,6 +458,8 @@ class TestReplaceTabMarkdown:
         assert data["applied"] is True
         assert data["revision_before"] == "rev-1"
         assert data["revision_after"] == "rev-2"
+        assert data["write_status"] == "written_verified"
+        assert data["retry_safe"] is True
 
     @pytest.mark.asyncio
     async def test_missing_tab_id_returns_error(self) -> None:
@@ -586,6 +600,45 @@ class TestReplaceTabMarkdown:
         assert data["applied"] is False
         assert "planned_requests" in data
         assert isinstance(data["planned_requests"], int)
+        assert data["write_status"] == "not_written"
+        assert data["retry_safe"] is True
+
+    @pytest.mark.asyncio
+    async def test_mixed_nested_list_ordered_list_and_table_round_trip(self) -> None:
+        """issue #65 Criterion 4: a nested unordered list, a separate
+        ordered list, and a table in the same tab must all round-trip
+        together through a single replace_tab_markdown call."""
+        pre = simple_markdown_doc("placeholder", revision="rev-1")
+        post = doc_with_mixed_lists_and_table(revision="rev-2")
+        patchers, _ = _build_mock_env(pre, post)
+        markdown = (
+            "- Parent bullet\n"
+            "  - Child bullet\n"
+            "\n"
+            "1. First\n"
+            "2. Second\n"
+            "\n"
+            "| Header A | Header B |\n"
+            "|---|---|\n"
+            "| Cell 1 | Cell 2 |\n"
+        )
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "replace_tab_markdown",
+                    {
+                        "doc_id": "doc-test",
+                        "tab_id": "tab-1",
+                        "markdown": markdown,
+                    },
+                )
+        assert not result.is_error
+        data = result.data
+        assert data["applied"] is True
+        assert data["structural_match"] is True
+        assert "structural_diff" not in data
+        assert data["write_status"] == "written_verified"
+        assert data["retry_safe"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -614,6 +667,8 @@ class TestAppendMarkdown:
         assert data["applied"] is True
         assert data["revision_before"] == "rev-1"
         assert data["revision_after"] == "rev-2"
+        assert data["write_status"] == "written_verified"
+        assert data["retry_safe"] is True
 
     @pytest.mark.asyncio
     async def test_dry_run_no_batchupdate(self) -> None:
@@ -635,6 +690,8 @@ class TestAppendMarkdown:
         data = result.data
         assert data["applied"] is False
         assert "planned_requests" in data
+        assert data["write_status"] == "not_written"
+        assert data["retry_safe"] is True
 
     @pytest.mark.asyncio
     async def test_unsupported_markdown_returns_error(self) -> None:
@@ -1113,6 +1170,148 @@ class TestSecondaryTabFalseSuccess:
         data = result.data
         assert data["post_blocks"] > 0
         assert data["applied"] is True
+
+
+# ---------------------------------------------------------------------------
+# Structure-prediction pre-flight (issue #65 defect 2): a compiler bug is
+# refused BEFORE any batchUpdate, instead of mutating the document and only
+# then discovering post-write verification would have failed.
+# ---------------------------------------------------------------------------
+
+
+def _broken_compile_wrong_preset(markdown: str, *, start_index: int = 1):
+    """A stand-in for compile_markdown that compiles correctly, then
+    corrupts every createParagraphBullets request's preset — reproducing
+    the exact defect shape of issue #65 (the compiler's own intent said one
+    thing; the emitted requests encoded another)."""
+    from verified_googledocs_mcp.markdown_writer import compile_markdown as real_compile
+
+    requests = real_compile(markdown, start_index=start_index)
+    for req in requests:
+        if "createParagraphBullets" in req:
+            req["createParagraphBullets"]["bulletPreset"] = "BULLET_DISC_CIRCLE_SQUARE"
+    return requests
+
+
+class TestStructurePredictionPreflight:
+    @pytest.mark.asyncio
+    async def test_replace_tab_markdown_refuses_before_mutating(self) -> None:
+        pre = simple_markdown_doc("Old content", revision="rev-1")
+        post = simple_markdown_doc("New content", revision="rev-2")
+        patchers, mock_service = _build_mock_env(pre, post)
+        patchers.append(
+            patch(
+                "verified_googledocs_mcp.markdown_mutations.compile_markdown",
+                _broken_compile_wrong_preset,
+            )
+        )
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "replace_tab_markdown",
+                    {
+                        "doc_id": "doc-test",
+                        "tab_id": "tab-1",
+                        "markdown": "1. first\n2. second\n",
+                    },
+                    raise_on_error=False,
+                )
+        assert result.is_error
+        payload = _error_payload(result)
+        assert payload["error_code"] == "STRUCTURE_PREDICTION_FAILED"
+        assert payload["diagnostics"]["write_status"] == "not_written"
+        assert payload["diagnostics"]["retry_safe"] is True
+        # The whole point of this defect: no batchUpdate was ever sent.
+        assert mock_service.documents.return_value.batchUpdate.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_dry_run_is_authoritative_for_structure_prediction_too(self) -> None:
+        # Mirrors index-bounds simulation's own dry_run authoritativeness:
+        # a passing dry_run must mean the real write would also pass, and a
+        # failing one must mean the real write would also fail — for
+        # structure prediction, not just index validity.
+        pre = simple_markdown_doc("Old content", revision="rev-1")
+        post = simple_markdown_doc("New content", revision="rev-2")
+        patchers, mock_service = _build_mock_env(pre, post)
+        patchers.append(
+            patch(
+                "verified_googledocs_mcp.markdown_mutations.compile_markdown",
+                _broken_compile_wrong_preset,
+            )
+        )
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "replace_tab_markdown",
+                    {
+                        "doc_id": "doc-test",
+                        "tab_id": "tab-1",
+                        "markdown": "1. first\n2. second\n",
+                        "dry_run": True,
+                    },
+                    raise_on_error=False,
+                )
+        assert result.is_error
+        payload = _error_payload(result)
+        assert payload["error_code"] == "STRUCTURE_PREDICTION_FAILED"
+        assert mock_service.documents.return_value.batchUpdate.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_replace_range_markdown_refuses_before_mutating(self) -> None:
+        pre = simple_markdown_doc("Hello world", revision="rev-1")
+        post = simple_markdown_doc("Hello world", revision="rev-1")
+        patchers, mock_service = _build_mock_env(pre, post)
+        patchers.append(
+            patch(
+                "verified_googledocs_mcp.markdown_mutations.compile_markdown",
+                _broken_compile_wrong_preset,
+            )
+        )
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "replace_range_markdown",
+                    {
+                        "doc_id": "doc-test",
+                        "tab_id": "tab-1",
+                        "start_index": 1,
+                        "end_index": 13,
+                        "computed_at_revision": "rev-1",
+                        "markdown": "1. first\n2. second\n",
+                    },
+                    raise_on_error=False,
+                )
+        assert result.is_error
+        payload = _error_payload(result)
+        assert payload["error_code"] == "STRUCTURE_PREDICTION_FAILED"
+        assert mock_service.documents.return_value.batchUpdate.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_append_markdown_refuses_before_mutating(self) -> None:
+        pre = simple_markdown_doc("Hello world", revision="rev-1")
+        post = simple_markdown_doc("Hello world", revision="rev-1")
+        patchers, mock_service = _build_mock_env(pre, post)
+        patchers.append(
+            patch(
+                "verified_googledocs_mcp.markdown_mutations.compile_markdown",
+                _broken_compile_wrong_preset,
+            )
+        )
+        with _apply_all(patchers):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "append_markdown",
+                    {
+                        "doc_id": "doc-test",
+                        "tab_id": "tab-1",
+                        "markdown": "1. first\n2. second\n",
+                    },
+                    raise_on_error=False,
+                )
+        assert result.is_error
+        payload = _error_payload(result)
+        assert payload["error_code"] == "STRUCTURE_PREDICTION_FAILED"
+        assert mock_service.documents.return_value.batchUpdate.call_count == 0
 
 
 # ---------------------------------------------------------------------------

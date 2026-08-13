@@ -9,10 +9,11 @@ write is index-valid.
 
 Honest scope
 ------------
-This simulator shares the compiler's table-geometry model (imported directly
-from ``markdown_writer`` so the two can never silently drift apart) — it
-cannot catch a *wrong* shared model, only a *wrong request* against a model
-both sides already agree on. What it DOES catch:
+This simulator shares the compiler's table-geometry and bullet-tab-strip
+models (imported directly from ``markdown_writer`` so the two can never
+silently drift apart) — it cannot catch a *wrong* shared model, only a
+*wrong request* against a model both sides already agree on. What it DOES
+catch:
 
   - Any location/range index that would fall outside the segment's current
     length as the batch is replayed, accounting for every request's own
@@ -34,9 +35,18 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .markdown_writer import _table_cell_index, _table_stride, _table_structural_size, _utf16_len
+from .markdown_writer import (
+    _table_cell_index,
+    _table_stride,
+    _table_structural_size,
+    _utf16_len,
+    bullet_tab_strip,
+)
 
-_RANGE_REQUEST_KEYS = ("updateParagraphStyle", "updateTextStyle", "createParagraphBullets")
+# createParagraphBullets is handled in its own branch (it shrinks the
+# segment by stripping leading tabs — see bullet_tab_strip); these two never
+# change segment length, so a plain bounds check is all they need.
+_RANGE_REQUEST_KEYS = ("updateParagraphStyle", "updateTextStyle")
 
 
 class IndexSimulationError(Exception):
@@ -167,6 +177,26 @@ def simulate_requests(
             _shift_tables(tables, end, delta)
             length += delta
 
+        elif "createParagraphBullets" in req:
+            rng = req["createParagraphBullets"]["range"]
+            start, end = rng["startIndex"], rng["endIndex"]
+            _check_range(start, end, req_idx, req)
+            # Unlike updateParagraphStyle/updateTextStyle, this strips each
+            # covered paragraph's leading tabs (confirmed live), shrinking
+            # the segment. bullet_tab_strip identifies exactly what gets
+            # removed by inspecting the *original* request list's own
+            # pure-tab insertText requests within [start, end) — those
+            # locations are still valid to compare directly against this
+            # request's own (also original, never-mutated) range values,
+            # because build_requests() emits every createParagraphBullets
+            # request in descending start-index order: nothing at or after
+            # *this* range's start has shrunk yet when we get here.
+            strip = bullet_tab_strip(requests, ranges=[(start, end)])
+            if strip:
+                delta = -strip
+                _shift_tables(tables, end, delta)
+                length += delta
+
         elif any(key in req for key in _RANGE_REQUEST_KEYS):
             key = next(k for k in _RANGE_REQUEST_KEYS if k in req)
             rng = req[key]["range"]
@@ -181,12 +211,15 @@ def simulate_requests(
 def compiled_requests_growth(requests: list[dict[str, Any]]) -> int:
     """Total net UTF-16 index growth a list of compiled requests would cause.
 
-    Sums insertText UTF-16 lengths and insertTable structural sizes; ignores
-    style/bullet requests (they don't change segment length). Used to bound
-    an evidence re-export window to exactly the content a write inserted,
-    instead of Python ``len()`` (wrong for astral emoji) or a text-only sum
-    (wrong when a table is present, since its structural markers don't
-    appear in any ``insertText``).
+    Sums insertText UTF-16 lengths and insertTable structural sizes, minus
+    what every createParagraphBullets request strips (its covered
+    paragraphs' leading tabs — confirmed live, see bullet_tab_strip);
+    updateParagraphStyle/updateTextStyle never change segment length. Used
+    to bound an evidence re-export window to exactly the content a write
+    inserted, instead of Python ``len()`` (wrong for astral emoji) or a
+    text-only sum (wrong when a table or a nested list is present: a
+    table's structural markers never appear in any ``insertText``, and a
+    nested list's leading tabs are inserted as text but then removed).
     """
     growth = 0
     for req in requests:
@@ -195,4 +228,5 @@ def compiled_requests_growth(requests: list[dict[str, Any]]) -> int:
         elif "insertTable" in req:
             body = req["insertTable"]
             growth += _table_structural_size(body["rows"], body["columns"])
+    growth -= bullet_tab_strip(requests)
     return growth

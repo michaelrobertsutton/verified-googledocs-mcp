@@ -73,7 +73,7 @@ is responsible for. Every mutating tool also carries `revision_before`,
 |--------|-------|--------|
 | **Text edit** | `replace_text` | `match_count` equals `expected_matches`; `rung` names the normalization pass that matched; `before`/`after` are ±200-char excerpts of the edited span, the `after` re-read post-write |
 | **Style edit** | `format_text` | `runs_before`/`runs_after` — the actual `textRun` style flags overlapping each matched span, not a text diff; `content_mutated: false` proven by `compiled_request_kinds` containing only `updateTextStyle`; `style_mutated` false on an idempotent re-run (no write is issued) |
-| **Markdown range** | `replace_range_markdown`, `replace_tab_markdown`, `append_markdown` | `structural_match` (the written markdown round-trips), `input_blocks` vs `post_blocks` counts, and a `structural_diff` list naming any mismatch |
+| **Markdown range** | `replace_range_markdown`, `replace_tab_markdown`, `append_markdown` | `structural_match` (the written markdown round-trips — including list nesting depth, ordered-vs-unordered, and link targets), `input_blocks` vs `post_blocks` counts, and a `structural_diff` list naming any mismatch; every response also carries `write_status` (`not_written` / `written_unverified` / `written_verified`) and `retry_safe` |
 | **Structural** | `insert_image` | `inline_object_confirmed` — a post-write scan found the inline object at the anchor paragraph |
 | **Comment state** | `add_anchored_comment`, `reply_to_comment`, `resolve_comment` | the re-queried `resolved` flag, `reply_count`, `content`, `quoted_text`, and `author` — a resolve that didn't land returns `COMMENT_STILL_OPEN`, never success |
 | **Table** | `replace_table_row`, `insert_table` | `replace_table_row`: `row_before`/`row_after` re-read with `cells_match`; `insert_table`: `table_confirmed` plus the confirmed dimensions and `first_row` |
@@ -102,6 +102,27 @@ not specific to `dry_run`. For `replace_table_row` and `insert_table`,
 list is index-simulated whether `dry_run` is true or false, so a passing dry
 run always means the real write will pass too. Use it to confirm a locate
 resolves to the right span before committing the edit.
+
+For the three markdown tools, `dry_run` is *also* authoritative for
+**structure prediction** (issue #65): before any `batchUpdate`, the compiled
+requests' own predicted block structure — nesting, ordered-vs-unordered,
+headings, tables — is compared against the parsed input markdown, identically
+in `dry_run` and the real write. A mismatch refuses with
+`STRUCTURE_PREDICTION_FAILED` *before* the document is touched, rather than
+mutating it and only then discovering post-write verification would have
+failed. Every response from these three tools — dry run, refused, or
+written — carries `write_status`, one of `not_written` (dry run, or a
+pre-flight refusal: `INDEX_SIMULATION_FAILED`, `STRUCTURE_PREDICTION_FAILED`,
+or the structural-loss guardrail), `written_unverified` (a `batchUpdate` was
+sent and accepted, but the post-write re-read did not confirm it matched —
+`VERIFICATION_FAILED`), or `written_verified` (confirmed) — plus a
+`retry_safe` boolean (`false` only for `written_unverified`, since a caller
+that retries a call whose mutation status is unconfirmed risks a second
+mutation on top of an unconfirmed first one; there is no automatic rollback —
+Docs has no revision-restore endpoint, and a compensating markdown rewrite
+would itself be lossy, so `needs_manual_restore: true` still means restoring
+from Docs version history). `write_status`/`retry_safe` are additive: the
+pre-existing `applied` field keeps its documented meaning unchanged.
 
 **All eight require a suggestion-free target tab.** Every mutating tool
 computes its write indices against a `suggestionsViewMode=PREVIEW_WITHOUT_SUGGESTIONS`
@@ -301,6 +322,7 @@ Failures return a typed envelope (`error_code`, `message`, `diagnostics`, `retry
 | `SUGGESTIONS_PRESENT` | The target tab has pending suggested insertions/deletions; a write refuses rather than computing indices against the wrong index space (issue #56) — accept or reject the suggestions first, then retry |
 | `INVALID_RANGE` | A caller-supplied range doesn't fit the tab's current extent, or the Docs API itself rejected the write as index/range-invalid (the verbatim API message is included) |
 | `INDEX_MODEL_DIVERGENCE` | A text run's computed UTF-16 length disagrees with the Docs API's reported `endIndex`; offsets from that read cannot be trusted |
+| `STRUCTURE_PREDICTION_FAILED` | A markdown write's compiled requests would not produce the input's block structure (nesting, ordered-vs-unordered, headings, tables) — caught before the API call by predicting the requests' own effect and comparing it against the parsed input (issue #65). Raised identically by `dry_run` and the real write, so a passing `dry_run` always means the write will verify too |
 
 ## Development
 

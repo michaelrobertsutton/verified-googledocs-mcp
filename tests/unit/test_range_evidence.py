@@ -60,6 +60,27 @@ def _heading_para(level: int, text: str, start: int, end: int) -> dict[str, Any]
     }
 
 
+def _bullet_para(
+    text: str, start: int, end: int, list_id: str = "list-1", nesting: int = 0
+) -> dict[str, Any]:
+    """A list-item paragraph. Matches the live API's real shape (issue #65):
+    ``bullet`` carries only ``listId``/``nestingLevel`` — never a glyph type,
+    so whether it reads back as ordered depends entirely on the ``lists``
+    map passed to ``assemble_range_markdown_evidence`` as ``post_lists``."""
+    bullet: dict[str, Any] = {"listId": list_id}
+    if nesting:
+        bullet["nestingLevel"] = nesting
+    return {
+        "startIndex": start,
+        "endIndex": end,
+        "paragraph": {
+            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            "bullet": bullet,
+            "elements": [{"startIndex": start, "endIndex": end, "textRun": {"content": text}}],
+        },
+    }
+
+
 def _inline_image_para(obj_id: str, start: int, end: int) -> dict[str, Any]:
     return {
         "startIndex": start,
@@ -166,6 +187,35 @@ class TestParsedMarkdownBlocks:
         assert blocks_num[0]["type"] == "list_item"
         assert blocks_dash[0]["text"] == blocks_star[0]["text"] == blocks_num[0]["text"]
 
+    def test_ordered_list_items_are_marked_ordered(self) -> None:
+        """issue #65: ordered vs unordered must be recorded on the block,
+        not silently dropped — this is what lets _blocks_structurally_equal
+        catch a numbered list that came back as bullets."""
+        blocks = _parse_markdown_blocks("1. first\n2. second\n")
+        list_items = [b for b in blocks if b["type"] == "list_item"]
+        assert len(list_items) == 2
+        assert all(b["ordered"] is True for b in list_items)
+
+    def test_unordered_list_items_are_marked_unordered(self) -> None:
+        blocks = _parse_markdown_blocks("- first\n- second\n")
+        list_items = [b for b in blocks if b["type"] == "list_item"]
+        assert len(list_items) == 2
+        assert all(b["ordered"] is False for b in list_items)
+
+    def test_nested_mixed_list_records_ordered_per_level(self) -> None:
+        # An ordered sub-list nested under an unordered parent: each level's
+        # own ordered-ness must be recorded independently, not inherited
+        # from the outermost list.
+        md = "- parent\n  1. sub one\n  2. sub two\n"
+        blocks = _parse_markdown_blocks(md)
+        list_items = [b for b in blocks if b["type"] == "list_item"]
+        assert len(list_items) == 3
+        parent = next(b for b in list_items if b["nesting"] == 0)
+        subs = [b for b in list_items if b["nesting"] == 1]
+        assert parent["ordered"] is False
+        assert len(subs) == 2
+        assert all(b["ordered"] is True for b in subs)
+
     def test_whitespace_runs_normalized(self) -> None:
         blocks = _parse_markdown_blocks("Hello  world")
         assert blocks[0]["text"] == "Hello world"
@@ -208,6 +258,53 @@ class TestBlocksStructurallyEqual:
     def test_different_table_dims(self) -> None:
         a = {"type": "table", "rows": 3, "cols": 2, "link_targets": []}
         b = {"type": "table", "rows": 2, "cols": 2, "link_targets": []}
+        assert not _blocks_structurally_equal(a, b)
+
+    def test_equal_list_items(self) -> None:
+        a = {"type": "list_item", "nesting": 1, "ordered": True, "text": "x", "link_targets": []}
+        b = {"type": "list_item", "nesting": 1, "ordered": True, "text": "x", "link_targets": []}
+        assert _blocks_structurally_equal(a, b)
+
+    def test_ordered_vs_unordered_list_item_not_equal(self) -> None:
+        """issue #65: same nesting and text, but one is a numbered list and
+        the other is bullets — this must not read as a structural match."""
+        a = {"type": "list_item", "nesting": 0, "ordered": True, "text": "x", "link_targets": []}
+        b = {"type": "list_item", "nesting": 0, "ordered": False, "text": "x", "link_targets": []}
+        assert not _blocks_structurally_equal(a, b)
+
+    def test_different_nesting_list_item_not_equal(self) -> None:
+        a = {"type": "list_item", "nesting": 0, "ordered": False, "text": "x", "link_targets": []}
+        b = {"type": "list_item", "nesting": 1, "ordered": False, "text": "x", "link_targets": []}
+        assert not _blocks_structurally_equal(a, b)
+
+    def test_mismatched_link_targets_not_equal_for_heading(self) -> None:
+        """issue #65 follow-up: link_targets was recorded but never compared
+        — a write that dropped or changed a hyperlink's URL, while leaving
+        the anchor text untouched, must not read as a structural match."""
+        a = {"type": "heading", "level": 1, "text": "Docs", "link_targets": ["https://a.example"]}
+        b = {"type": "heading", "level": 1, "text": "Docs", "link_targets": ["https://b.example"]}
+        assert not _blocks_structurally_equal(a, b)
+
+    def test_mismatched_link_targets_not_equal_for_paragraph(self) -> None:
+        a = {"type": "paragraph", "text": "See link", "link_targets": ["https://a.example"]}
+        b = {"type": "paragraph", "text": "See link", "link_targets": []}
+        assert not _blocks_structurally_equal(a, b)
+
+    def test_mismatched_link_targets_not_equal_for_list_item(self) -> None:
+        a = {
+            "type": "list_item",
+            "nesting": 0,
+            "ordered": False,
+            "text": "x",
+            "link_targets": ["https://a.example"],
+        }
+        b = {
+            "type": "list_item",
+            "nesting": 0,
+            "ordered": False,
+            "text": "x",
+            "link_targets": ["https://b.example"],
+        }
         assert not _blocks_structurally_equal(a, b)
 
 
@@ -401,6 +498,45 @@ class TestAssembleRangeMarkdownEvidence:
         assert ev["structural_match"] is True
         assert ev["input_blocks"] == 1
         assert ev["post_blocks"] == 1
+        assert "structural_diff" not in ev
+
+    def test_ordered_list_regression_caught_when_post_write_reads_back_unordered(
+        self,
+    ) -> None:
+        """issue #65: this is the exact defect the fix closes. Without a
+        post_lists map (or with one that doesn't mark the level ordered),
+        to_markdown renders every list item as unordered, so an ordered
+        write must fail structural_match instead of reporting success."""
+        post = _body(_bullet_para("First\n", 1, 7), _bullet_para("Second\n", 7, 14))
+        ev = assemble_range_markdown_evidence(
+            input_markdown="1. First\n2. Second\n",
+            post_body=post,
+            start_index=1,
+            end_index=14,
+            revision_before="rev-1",
+            revision_after="rev-2",
+            applied=True,
+            audit_logged=True,
+            # post_lists omitted entirely — the pre-#65 blind spot.
+        )
+        assert ev["structural_match"] is False
+        assert "structural_diff" in ev
+
+    def test_ordered_list_matches_when_post_lists_confirms_ordered(self) -> None:
+        post = _body(_bullet_para("First\n", 1, 7), _bullet_para("Second\n", 7, 14))
+        post_lists = {"list-1": {"listProperties": {"nestingLevels": [{"glyphType": "DECIMAL"}]}}}
+        ev = assemble_range_markdown_evidence(
+            input_markdown="1. First\n2. Second\n",
+            post_body=post,
+            start_index=1,
+            end_index=14,
+            revision_before="rev-1",
+            revision_after="rev-2",
+            applied=True,
+            audit_logged=True,
+            post_lists=post_lists,
+        )
+        assert ev["structural_match"] is True
         assert "structural_diff" not in ev
 
 

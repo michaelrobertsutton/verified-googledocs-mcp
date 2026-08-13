@@ -35,6 +35,7 @@ class TestErrorCodeCoverage:
         "SUGGESTIONS_PRESENT",
         "INVALID_RANGE",
         "INDEX_MODEL_DIVERGENCE",
+        "STRUCTURE_PREDICTION_FAILED",
     }
 
     def test_all_codes_exist(self):
@@ -42,7 +43,7 @@ class TestErrorCodeCoverage:
         assert actual == self.EXPECTED_CODES
 
     def test_enum_count(self):
-        assert len(ErrorCode) == 18
+        assert len(ErrorCode) == 19
 
 
 class TestRetryablePolicy:
@@ -62,6 +63,12 @@ class TestRetryablePolicy:
         assert ErrorCode.ZERO_MATCH in non_retryable
         assert ErrorCode.STRUCTURAL_BOUNDARY in non_retryable
         assert ErrorCode.MATCH_COUNT_MISMATCH in non_retryable
+        # STRUCTURE_PREDICTION_FAILED (issue #65) is not transient — the
+        # same compiler bug will reproduce on an identical retry — but it
+        # IS retry_safe (see the diagnostics field, a separate axis from
+        # this top-level envelope flag): nothing was written, so a caller
+        # can safely retry with a fixed input.
+        assert ErrorCode.STRUCTURE_PREDICTION_FAILED in non_retryable
 
 
 class TestErrorEnvelopeShape:

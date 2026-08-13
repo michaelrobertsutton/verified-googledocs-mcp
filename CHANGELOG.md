@@ -6,6 +6,61 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Nested lists and ordered lists now round-trip correctly through
+  `replace_tab_markdown`, `replace_range_markdown`, and `append_markdown`
+  (issue #65). Two independent defects, same call path:
+  - **Nesting was lost on write.** `createParagraphBullets` derives each
+    paragraph's nesting level from its leading tab characters, stripping
+    them as part of the same request (confirmed against the live API by a
+    new contract test, `TestBulletNestingProbe`); the compiler never wrote
+    those tabs, so every nested item landed at level 0. It now prefixes
+    each item with `"\t" * nesting` and emits one `createParagraphBullets`
+    request per contiguous run of same-`ordered` items — not one per item —
+    so nesting is derived in a single pass and ordered numbering stays
+    continuous across the run.
+  - **Ordered lists were lost on read.** The markdown reader looked for a
+    glyph type on `bullet.listProperties`, a key the Docs API never
+    populates; the glyph type actually lives on the tab's `lists` map,
+    keyed by `listId`. Every numbered list therefore read back as bullets.
+    `to_markdown` now accepts that `lists` map and reconstructs sequential
+    numbering (with nested sub-lists restarting their own count under each
+    parent, and `startNumber` values other than 1 not preserved — markdown
+    has no portable way to carry that through the structural comparison).
+- A failed post-write verification could leave a caller unable to tell
+  "nothing happened" from "a `batchUpdate` landed but didn't verify" —
+  `applied: false` reads the same in both cases, and a caller that retried
+  the unconfirmed case risked a second mutation on top of the first. Every
+  markdown-write response (and, via the shared verification helper, every
+  other verified-write tool's post-write-failure response) now also carries
+  `write_status` (`not_written` / `written_unverified` / `written_verified`)
+  and `retry_safe` (`false` only for `written_unverified`). Automatic
+  rollback remains out of scope — Docs has no revision-restore endpoint, and
+  a compensating markdown rewrite would itself be lossy — so
+  `needs_manual_restore: true` still means restoring from Docs version
+  history.
+- `_blocks_structurally_equal` recorded `link_targets` on every parsed block
+  but never compared them, so a write that dropped or changed a hyperlink's
+  URL while leaving the anchor text untouched still reported
+  `structural_match: true`. It also didn't compare a list item's
+  ordered-vs-unordered flag. Both are now checked.
+- `compiled_requests_growth` and the offline index simulator treated
+  `createParagraphBullets` as a pure no-length-change range request; now
+  that it strips leading tabs, both account for the shrink (shared via a
+  new `bullet_tab_strip` helper, keeping the two models from silently
+  drifting apart the same way the existing table-geometry helpers do).
+
+### Added
+- The three markdown-write tools now run a pre-flight structure prediction
+  (`predict_blocks`, issue #65) before any `batchUpdate`: it predicts the
+  block structure the compiled requests will actually produce — reasoning
+  only about the requests themselves, never the compiler's internal intent
+  — and refuses with the new `STRUCTURE_PREDICTION_FAILED` error if it
+  wouldn't match the input markdown, leaving the document untouched instead
+  of mutating it and failing verification afterward. Run identically by
+  `dry_run` and the real write, so a passing `dry_run` is now authoritative
+  for structure as well as index validity.
+
 ## [0.2.0] - 2026-08-09
 
 ### Fixed

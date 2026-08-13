@@ -9,9 +9,10 @@ Implements the verified-write pipeline for every markdown-mutating tool:
 API calls live here; verify.py stays pure.
 
 Live-API caveats (needs fixture session with real credentials):
-- insertTable cell-index formula in markdown_writer.py is unverified against
-  the live API.
-- createParagraphBullets nesting mechanism in markdown_writer.py is unverified.
+- insertTable cell-index formula in markdown_writer.py is pinned by
+  tests/live/test_markdown_writes.py::TestTableGeometryProbe.
+- createParagraphBullets nesting mechanism in markdown_writer.py is pinned by
+  tests/live/test_markdown_writes.py::TestBulletNestingProbe (issue #65).
 - Whole-tab and range deletes hit the Docs "cannot delete the segment's
   trailing newline" constraint — the delete range must stop at end-1.
 - append_markdown inserts before the final newline (at end-1), not the raw end.
@@ -25,7 +26,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .docs import IMPLICIT_TAB_ID, _available_tab_ids, _find_tab_body, fetch_document
+from .docs import (
+    IMPLICIT_TAB_ID,
+    _available_tab_ids,
+    _find_tab_body,
+    _find_tab_lists,
+    fetch_document,
+)
 from .index_sim import IndexSimulationError, compiled_requests_growth, simulate_requests
 from .markdown import to_markdown
 from .markdown_writer import UnsupportedMarkdown, compile_markdown
@@ -35,11 +42,14 @@ from .verify import (
     ErrorCode,
     LocateResult,
     VerifyError,
+    _blocks_structurally_equal,
     _make_error,
+    _parse_markdown_blocks,
     append_audit,
     assemble_range_markdown_evidence,
     assemble_structural_evidence,
     locate,
+    predict_blocks,
 )
 
 
@@ -170,9 +180,20 @@ def _raise_post_write_verification_failure(
     not confirmed to match what the caller asked for (issue #56). There is no
     rollback here — a caller that sees document_mutated=True must restore from
     Docs version history if the mutation is unwanted.
+
+    Sets write_status="written_unverified" and retry_safe=False (issue #65):
+    every call site is reached only after a batchUpdate landed, so a caller
+    that keyed only on applied=False and retried the same call would risk a
+    second mutation on top of an unconfirmed first one. write_status gives
+    that caller one field to check, distinct from applied — applied stays
+    the pre-existing README-documented contract; write_status additionally
+    distinguishes "never attempted" (not_written) from "landed but did not
+    verify" (written_unverified) from "landed and verified" (written_verified).
     """
     evidence["applied"] = False
     evidence["verification_failed"] = True
+    evidence["write_status"] = "written_unverified"
+    evidence["retry_safe"] = False
     revision_before = evidence.get("revision_before")
     revision_after = evidence.get("revision_after")
     if revision_before and revision_after and revision_before != revision_after:
@@ -247,8 +268,67 @@ def _simulate_or_raise(
         raise _make_error(
             ErrorCode.INDEX_SIMULATION_FAILED,
             str(exc),
-            {"request_index": exc.request_index, "request": exc.request},
+            {
+                "request_index": exc.request_index,
+                "request": exc.request,
+                "write_status": "not_written",
+                "retry_safe": True,
+            },
         ) from exc
+
+
+def _predict_or_raise(compiled_requests: list[dict[str, Any]], *, markdown: str) -> None:
+    """Pre-flight structure prediction (issue #65's defect 2): confirms the
+    compiled requests will actually produce the block structure *markdown*
+    described, BEFORE any batchUpdate is sent.
+
+    Called identically from dry_run and the real write's pre-flight, on the
+    exact same compiled_requests (compile_markdown's own output — never the
+    fully assembled batch with a deleteContentRange or append's newline
+    prefix), so the two paths can never disagree about whether a write will
+    verify. Complements _simulate_or_raise (index validity): this checks
+    structural fidelity instead, catching exactly the class of bug that
+    caused issue #65 — a compiler whose internal model said one thing (e.g.
+    nesting=1) but whose emitted requests encoded another (nesting=0).
+
+    Scope, stated honestly: this closes predictable compiler/request-shape
+    failures. It does not, and cannot, eliminate every mutate-then-fail
+    path — reader bugs, live API behaviour drift, evidence-slicing bugs,
+    and any request effect predict_blocks doesn't model can still fail
+    verification after a write lands. write_status/retry_safe (set by
+    _raise_post_write_verification_failure) remain the safety net for
+    those; this function is the pre-emptive half.
+    """
+    predicted = predict_blocks(compiled_requests)
+    input_blocks = _parse_markdown_blocks(markdown)
+
+    mismatches: list[str] = []
+    if len(input_blocks) != len(predicted):
+        mismatches.append(
+            f"Block count mismatch: input has {len(input_blocks)}, predicted {len(predicted)}"
+        )
+    else:
+        mismatches = [
+            f"Block {i}: input={ib!r} vs predicted={pb!r}"
+            for i, (ib, pb) in enumerate(zip(input_blocks, predicted))
+            if not _blocks_structurally_equal(ib, pb)
+        ]
+
+    if mismatches:
+        raise _make_error(
+            ErrorCode.STRUCTURE_PREDICTION_FAILED,
+            (
+                "Pre-flight structure prediction failed: the compiled requests would not "
+                "produce the input markdown's block structure. No write was issued."
+            ),
+            {
+                "mismatches": mismatches,
+                "input_blocks": len(input_blocks),
+                "predicted_blocks": len(predicted),
+                "write_status": "not_written",
+                "retry_safe": True,
+            },
+        )
 
 
 def _stamp_tab_id(node: Any, tab_id: str) -> None:
@@ -439,6 +519,8 @@ def execute_replace_range_markdown(
                         "structural_elements_in_range": range_counts,
                         "input_tables": input_tables,
                         "allow_structural_loss": False,
+                        "write_status": "not_written",
+                        "retry_safe": True,
                     },
                 )
 
@@ -469,6 +551,13 @@ def execute_replace_range_markdown(
     # (tab_start/tab_end already computed above for the range-vs-extent check.)
     _simulate_or_raise(requests, tab_start=tab_start, tab_end=tab_end)
 
+    # --- Structure prediction (makes dry_run authoritative for issue #65) ----
+    # Runs on compiled_requests alone (never the delete-prefixed full batch),
+    # from both dry_run and the real write, so a write that would fail
+    # post-write verification is refused here instead — before any
+    # batchUpdate — rather than mutating the document first.
+    _predict_or_raise(compiled_requests, markdown=markdown)
+
     # --- Dry run -------------------------------------------------------------
     if dry_run:
         evidence: dict[str, Any] = {
@@ -481,6 +570,8 @@ def execute_replace_range_markdown(
                 body, start_index, end_index
             ),
             "audit_logged": False,
+            "write_status": "not_written",
+            "retry_safe": True,
         }
         return evidence
 
@@ -503,6 +594,7 @@ def execute_replace_range_markdown(
     post_doc = fetch_document(service, doc_id)
     revision_after = post_doc.get("revisionId", "")
     post_body = _find_tab_body(post_doc, tab_id) or {}
+    post_lists = _find_tab_lists(post_doc, tab_id)
 
     # --- Blast-radius check --------------------------------------------------
     outside_after = _count_structural_elements_outside_range(post_body, start_index, end_index)
@@ -539,6 +631,7 @@ def execute_replace_range_markdown(
         revision_after=revision_after,
         applied=True,
         audit_logged=True,
+        post_lists=post_lists,
     )
     evidence = _flag_unconfirmed_write(evidence, post_body)
     _fail_if_range_verification_failed(
@@ -547,6 +640,8 @@ def execute_replace_range_markdown(
         tool="replace_range_markdown",
         evidence=evidence,
     )
+    evidence["write_status"] = "written_verified"
+    evidence["retry_safe"] = True
 
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
@@ -635,6 +730,8 @@ def execute_replace_tab_markdown(
                         "structural_elements_in_tab": all_counts,
                         "input_tables": input_tables,
                         "allow_structural_loss": False,
+                        "write_status": "not_written",
+                        "retry_safe": True,
                     },
                 )
 
@@ -663,6 +760,9 @@ def execute_replace_tab_markdown(
     # real write can never disagree about whether it's index-valid.
     _simulate_or_raise(requests, tab_start=tab_start, tab_end=tab_end)
 
+    # --- Structure prediction (makes dry_run authoritative for issue #65) ----
+    _predict_or_raise(compiled_requests, markdown=markdown)
+
     # --- Dry run -------------------------------------------------------------
     if dry_run:
         evidence: dict[str, Any] = {
@@ -673,6 +773,8 @@ def execute_replace_tab_markdown(
             "planned_requests": len(compiled_requests),
             "tab_extent": {"start": tab_start, "end": tab_end},
             "audit_logged": False,
+            "write_status": "not_written",
+            "retry_safe": True,
         }
         return evidence
 
@@ -695,6 +797,7 @@ def execute_replace_tab_markdown(
     post_doc = fetch_document(service, doc_id)
     revision_after = post_doc.get("revisionId", "")
     post_body = _find_tab_body(post_doc, tab_id) or {}
+    post_lists = _find_tab_lists(post_doc, tab_id)
 
     # --- Assemble evidence ---------------------------------------------------
     post_tab_start, post_tab_end = _tab_extent(post_body)
@@ -707,6 +810,7 @@ def execute_replace_tab_markdown(
         revision_after=revision_after,
         applied=True,
         audit_logged=True,
+        post_lists=post_lists,
     )
     evidence = _flag_unconfirmed_write(evidence, post_body)
     _fail_if_range_verification_failed(
@@ -715,6 +819,8 @@ def execute_replace_tab_markdown(
         tool="replace_tab_markdown",
         evidence=evidence,
     )
+    evidence["write_status"] = "written_verified"
+    evidence["retry_safe"] = True
 
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
@@ -797,6 +903,9 @@ def execute_append_markdown(
     # real write can never disagree about whether it's index-valid.
     _simulate_or_raise(requests, tab_start=tab_start, tab_end=tab_end)
 
+    # --- Structure prediction (makes dry_run authoritative for issue #65) ----
+    _predict_or_raise(compiled_requests, markdown=markdown)
+
     # --- Dry run -------------------------------------------------------------
     if dry_run:
         evidence: dict[str, Any] = {
@@ -807,6 +916,8 @@ def execute_append_markdown(
             "planned_requests": len(requests),
             "insert_at": insert_at,
             "audit_logged": False,
+            "write_status": "not_written",
+            "retry_safe": True,
         }
         return evidence
 
@@ -829,6 +940,7 @@ def execute_append_markdown(
     post_doc = fetch_document(service, doc_id)
     revision_after = post_doc.get("revisionId", "")
     post_body = _find_tab_body(post_doc, tab_id) or {}
+    post_lists = _find_tab_lists(post_doc, tab_id)
 
     # --- Assemble evidence ---------------------------------------------------
     # Use content_start (not insert_at) so the evidence window excludes the
@@ -846,6 +958,7 @@ def execute_append_markdown(
         revision_after=revision_after,
         applied=True,
         audit_logged=True,
+        post_lists=post_lists,
     )
     evidence = _flag_unconfirmed_write(evidence, post_body)
     _fail_if_range_verification_failed(
@@ -854,6 +967,8 @@ def execute_append_markdown(
         tool="append_markdown",
         evidence=evidence,
     )
+    evidence["write_status"] = "written_verified"
+    evidence["retry_safe"] = True
 
     audit_ok, audit_reason = append_audit(
         doc=doc_id,
@@ -1195,7 +1310,7 @@ def execute_diff_tab_vs_file(
             {"available_tabs": available},
         )
 
-    tab_markdown, _ = to_markdown(body)
+    tab_markdown, _ = to_markdown(body, lists=_find_tab_lists(doc, tab_id))
     revision_id = doc.get("revisionId", "")
 
     # --- Read the local file -------------------------------------------------
