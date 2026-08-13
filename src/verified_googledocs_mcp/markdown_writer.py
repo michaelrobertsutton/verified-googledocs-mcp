@@ -171,6 +171,69 @@ def _table_cell_index(table_start: int, n_cols: int, r_idx: int, c_idx: int) -> 
 
 
 # ---------------------------------------------------------------------------
+# List-nesting geometry (shared with index_sim.py — single source of truth)
+# ---------------------------------------------------------------------------
+#
+# Pinned by the live contract test
+# tests/live/test_markdown_writes.py::TestBulletNestingProbe, which applies a
+# raw createParagraphBullets request and reads back the real per-paragraph
+# nestingLevel and textRun.content. index_sim.py imports this instead of
+# re-deriving the strip amount, so the simulator and the compiler's own
+# evidence-window sizing can never silently drift apart.
+
+# The deepest 0-indexed nesting level a Docs bullet preset defines (9 levels,
+# 0-8). A source depth past this clamps to level 8 rather than erroring —
+# confirmed live — which is why the compiler refuses deeper input instead of
+# silently emitting a request Google will clamp (see _visit_list below).
+MAX_LIST_NESTING_LEVEL = 8
+
+
+def bullet_tab_strip(
+    requests: list[dict[str, Any]], ranges: list[tuple[int, int]] | None = None
+) -> int:
+    """Total UTF-16 length of leading-tab ``insertText`` requests that fall
+    inside *ranges* (every ``createParagraphBullets`` range already present
+    in *requests*, if *ranges* is omitted).
+
+    ``createParagraphBullets`` derives each paragraph's nesting level from
+    its leading tab characters and removes them as part of the same
+    request (confirmed live). ``_visit_list_item`` emits each list item's
+    leading tabs as an isolated ``insertText`` request containing *only*
+    tab characters, positioned at the paragraph's own start — never merged
+    with the item's real inline text — so this function can identify
+    exactly what a bullet run will strip by inspecting the request list
+    alone, without re-walking the parse tree. Shared by
+    ``compiled_requests_growth`` (evidence-window sizing) and
+    ``index_sim.py``'s ``simulate_requests`` (index-bounds modelling, given
+    one specific range at a time), so the two can never silently disagree
+    about how much a bullet run shrinks the segment.
+    """
+    if ranges is None:
+        ranges = [
+            (
+                req["createParagraphBullets"]["range"]["startIndex"],
+                req["createParagraphBullets"]["range"]["endIndex"],
+            )
+            for req in requests
+            if "createParagraphBullets" in req
+        ]
+    if not ranges:
+        return 0
+
+    total = 0
+    for req in requests:
+        if "insertText" not in req:
+            continue
+        text = req["insertText"]["text"]
+        if not text or any(ch != "\t" for ch in text):
+            continue
+        idx = req["insertText"]["location"]["index"]
+        if any(start <= idx < end for start, end in ranges):
+            total += _utf16_len(text)
+    return total
+
+
+# ---------------------------------------------------------------------------
 # Internal compiler
 # ---------------------------------------------------------------------------
 
@@ -259,14 +322,85 @@ class _Compiler:
     # ------------------------------------------------------------------
 
     def build_requests(self) -> list[dict[str, Any]]:
-        """Return the fully assembled request list."""
+        """Return the fully assembled request list.
+
+        Order matters once bullet requests are involved: every insertText,
+        heading updateParagraphStyle, and updateTextStyle request is emitted
+        first, entirely in the original (pre-strip) coordinate space, and
+        every createParagraphBullets request — the only request type that
+        changes segment length by stripping leading tabs — runs strictly
+        last, in descending start-index order (see
+        ``_bullet_run_requests``). This way nothing earlier in the batch is
+        ever computed against an index a still-pending bullet strip has not
+        yet applied.
+        """
         requests: list[dict[str, Any]] = []
         requests.extend(self._inserts)
         for ps in self._para_styles:
-            requests.extend(self._make_para_style_requests(ps))
+            if ps.kind == "heading":
+                requests.extend(self._make_para_style_requests(ps))
         for ss in self._style_spans:
             requests.extend(self._make_text_style_requests(ss))
+        requests.extend(self._bullet_run_requests())
         return requests
+
+    def _bullet_run_requests(self) -> list[dict[str, Any]]:
+        """One ``createParagraphBullets`` request per contiguous run of
+        same-``ordered`` list-item paragraphs, in descending start-index order.
+
+        One request per run — not per item — is what lets
+        createParagraphBullets derive each paragraph's own nesting level
+        from its own leading tabs in a single pass, and keeps ordered
+        numbering continuous across the run rather than restarting at 1 per
+        item (confirmed live — TestBulletNestingProbe). A run breaks on a
+        non-bullet block or a change of ``ordered``; the gap check below
+        (``current["end"] == ps.start``) is what actually detects a break —
+        content between two list items that never produced its own
+        ``_ParagraphStyle`` entry (e.g. a plain paragraph) still opens a
+        gap, so it can never be silently swept into a bullet range.
+
+        Descending order matters because createParagraphBullets strips each
+        paragraph's leading tabs, shrinking the segment: processing the
+        highest-start run first means its shrink only affects text strictly
+        after it — which, since runs never overlap, is never a lower-start
+        run not yet applied. Ascending order would corrupt every
+        not-yet-applied run's indices the moment the first one strips its
+        tabs.
+        """
+        runs: list[dict[str, Any]] = []
+        current: dict[str, Any] | None = None
+        for ps in self._para_styles:
+            if ps.kind != "bullets":
+                if current is not None:
+                    runs.append(current)
+                    current = None
+                continue
+            if (
+                current is not None
+                and current["ordered"] == ps.ordered
+                and current["end"] == ps.start
+            ):
+                current["end"] = ps.end
+            else:
+                if current is not None:
+                    runs.append(current)
+                current = {"start": ps.start, "end": ps.end, "ordered": ps.ordered}
+        if current is not None:
+            runs.append(current)
+
+        return [
+            {
+                "createParagraphBullets": {
+                    "range": {"startIndex": r["start"], "endIndex": r["end"]},
+                    "bulletPreset": (
+                        "NUMBERED_DECIMAL_ALPHA_ROMAN"
+                        if r["ordered"]
+                        else "BULLET_DISC_CIRCLE_SQUARE"
+                    ),
+                }
+            }
+            for r in sorted(runs, key=lambda r: r["start"], reverse=True)
+        ]
 
     # ------------------------------------------------------------------
     # Tree walker
@@ -412,6 +546,15 @@ class _Compiler:
     # ------------------------------------------------------------------
 
     def _visit_list(self, node: SyntaxTreeNode, ordered: bool, nesting: int) -> None:
+        if nesting > MAX_LIST_NESTING_LEVEL:
+            # Refuse rather than clamp (issue #65): Docs itself clamps a
+            # deeper request to level 8 silently, which would make both
+            # sides of the structural verification agree on the wrong
+            # (flattened) level and falsely report success.
+            raise UnsupportedMarkdown(
+                construct=(f"list_nesting_depth_{nesting}_exceeds_max_{MAX_LIST_NESTING_LEVEL}"),
+                source_map=node.map,
+            )
         for item in node.children:
             if item.type != "list_item":
                 raise UnsupportedMarkdown(construct=item.type, source_map=item.map)
@@ -421,6 +564,16 @@ class _Compiler:
         for child in item.children:
             if child.type == "paragraph":
                 para_start = self._cursor
+                # Leading tabs are how createParagraphBullets derives this
+                # paragraph's nesting level, and it strips them as part of
+                # the same request (confirmed live —
+                # TestBulletNestingProbe). Emitted as an isolated,
+                # pure-tab insertText — never merged with the item's real
+                # inline text — so bullet_tab_strip can identify exactly
+                # what a bullet run will remove by inspecting the request
+                # list alone.
+                if nesting > 0:
+                    self._insert_text("\t" * nesting)
                 self._visit_inline_content(child, para_start)
                 self._insert_text("\n")
                 para_end = self._cursor
@@ -639,6 +792,10 @@ class _Compiler:
     # ------------------------------------------------------------------
 
     def _make_para_style_requests(self, ps: _ParagraphStyle) -> list[dict[str, Any]]:
+        # "bullets" entries are handled separately by _bullet_run_requests,
+        # which coalesces contiguous same-ordered runs into one request each
+        # rather than one per item (issue #65) — this method only ever
+        # receives "heading" entries from build_requests().
         if ps.kind == "heading":
             named_style = f"HEADING_{ps.level}"
             return [
@@ -650,22 +807,6 @@ class _Compiler:
                         },
                         "paragraphStyle": {"namedStyleType": named_style},
                         "fields": "namedStyleType",
-                    }
-                }
-            ]
-        if ps.kind == "bullets":
-            return [
-                {
-                    "createParagraphBullets": {
-                        "range": {
-                            "startIndex": ps.start,
-                            "endIndex": ps.end,
-                        },
-                        "bulletPreset": (
-                            "NUMBERED_DECIMAL_ALPHA_ROMAN"
-                            if ps.ordered
-                            else "BULLET_DISC_CIRCLE_SQUARE"
-                        ),
                     }
                 }
             ]

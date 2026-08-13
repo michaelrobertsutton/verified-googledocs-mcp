@@ -92,6 +92,95 @@ def test_delete_then_insert_full_batch_simulates_clean():
 
 
 # ---------------------------------------------------------------------------
+# Nested and ordered lists (issue #65): createParagraphBullets strips each
+# covered paragraph's leading tabs, shrinking the segment — the simulator
+# must model that shrink, not treat bullet requests as pure no-length-change
+# ranges the way updateParagraphStyle/updateTextStyle actually are.
+# ---------------------------------------------------------------------------
+
+
+def test_nested_list_simulates_clean():
+    src = "- parent\n  - child\n  - child 2\n"
+    reqs = compile_markdown(src, start_index=1)
+    simulate_requests(reqs, tab_start=1, tab_end=2)  # does not raise
+
+
+def test_mixed_ordered_and_unordered_lists_simulate_clean():
+    # Two separate createParagraphBullets runs (different bulletPreset),
+    # each stripping its own tabs, emitted in descending start-index order —
+    # exercises the exact ordering the fix depends on for correctness.
+    src = "- parent\n  1. sub one\n  2. sub two\n"
+    reqs = compile_markdown(src, start_index=1)
+    simulate_requests(reqs, tab_start=1, tab_end=2)
+
+
+def _two_bullet_run_batch(*, descending: bool) -> list[dict]:
+    """Hand-built batch mirroring the real compiler's shape: each paragraph's
+    leading tab is its own isolated insertText (never merged with the
+    paragraph's real text), followed by two separate createParagraphBullets
+    runs each covering exactly one paragraph. *descending* controls the
+    order the two bullet requests are placed in — this is the one variable
+    the fix's correctness depends on.
+    """
+    bullets = [
+        {
+            "createParagraphBullets": {
+                "range": {"startIndex": 1, "endIndex": 4},
+                "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+            }
+        },
+        {
+            "createParagraphBullets": {
+                "range": {"startIndex": 4, "endIndex": 7},
+                "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+            }
+        },
+    ]
+    if descending:
+        bullets.reverse()
+    return [
+        {"insertText": {"text": "\t", "location": {"index": 1}}},
+        {"insertText": {"text": "a\n", "location": {"index": 2}}},
+        {"insertText": {"text": "\t", "location": {"index": 4}}},
+        {"insertText": {"text": "b\n", "location": {"index": 5}}},
+        *bullets,
+    ]
+
+
+def test_ascending_order_bullet_runs_are_caught_as_invalid():
+    """Proves the shrink-modeling has real teeth and that emission order is
+    load-bearing, not cosmetic: applying the lower-start run FIRST strips
+    its tab, shrinking everything after it — including the still-original,
+    not-yet-shifted range of the second run, which the simulator must then
+    flag as exceeding the (now smaller) segment length. compile_markdown
+    itself always emits bullet requests in descending order
+    (test_markdown_writer.py asserts this directly); this test proves *why*
+    that ordering matters by constructing the wrong order by hand."""
+    requests = _two_bullet_run_batch(descending=False)
+    with pytest.raises(IndexSimulationError):
+        simulate_requests(requests, tab_start=1, tab_end=1)
+
+
+def test_descending_order_bullet_runs_simulate_clean():
+    """The same batch, correctly ordered (as compile_markdown always emits
+    it), must not raise."""
+    requests = _two_bullet_run_batch(descending=True)
+    simulate_requests(requests, tab_start=1, tab_end=1)  # does not raise
+
+
+def test_growth_subtracts_stripped_leading_tabs():
+    # Raw insertText total includes every leading tab as literal text (the
+    # compiler doesn't know Docs will strip them); compiled_requests_growth
+    # must subtract exactly what createParagraphBullets removes, or the
+    # evidence-window end would over-reach into the next paragraph.
+    src = "- parent\n  - child\n"
+    reqs = compile_markdown(src, start_index=1)
+    growth = compiled_requests_growth(reqs)
+    raw_insert_len = sum(len(r["insertText"]["text"]) for r in reqs if "insertText" in r)
+    assert growth == raw_insert_len - 1  # one leading tab (child, nesting=1)
+
+
+# ---------------------------------------------------------------------------
 # The simulator must catch the ORIGINAL bug shape (the +1 offset).
 # ---------------------------------------------------------------------------
 

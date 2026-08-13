@@ -85,17 +85,37 @@ def _find_tab_body(doc: dict[str, Any], tab_id: str) -> dict[str, Any] | None:
         if tab_id == IMPLICIT_TAB_ID:
             return doc.get("body")
         return None
-    return _search_tabs(tabs_raw, tab_id)
+    return _search_tabs(tabs_raw, tab_id, "body")
 
 
-def _search_tabs(tabs: list[dict[str, Any]], tab_id: str) -> dict[str, Any] | None:
+def _find_tab_lists(doc: dict[str, Any], tab_id: str) -> dict[str, Any]:
+    """Return the ``lists`` map (listId -> List) for the given tab_id.
+
+    A paragraph's ``bullet`` carries only ``listId``/``nestingLevel``/
+    ``textStyle`` — never the glyph type or preset (confirmed live,
+    ``tests/live/test_markdown_writes.py::TestBulletNestingProbe``). The
+    glyph definition that says whether a list is ordered or unordered lives
+    here, at ``lists[listId].listProperties.nestingLevels[n]``, keyed
+    per-tab (or at the document's top level for a tabless doc). Returns
+    ``{}`` if the tab has no lists or is not found, so callers can always do
+    a plain dict lookup without a None check.
+    """
+    tabs_raw = doc.get("tabs", [])
+    if not tabs_raw:
+        if tab_id == IMPLICIT_TAB_ID:
+            return doc.get("lists", {}) or {}
+        return {}
+    return _search_tabs(tabs_raw, tab_id, "lists") or {}
+
+
+def _search_tabs(tabs: list[dict[str, Any]], tab_id: str, key: str) -> dict[str, Any] | None:
     for tab in tabs:
         props = tab.get("tabProperties", {})
         if props.get("tabId") == tab_id:
             doc_tab = tab.get("documentTab", {})
-            return doc_tab.get("body")
+            return doc_tab.get(key)
         # Recurse into children.
-        child_result = _search_tabs(tab.get("childTabs", []), tab_id)
+        child_result = _search_tabs(tab.get("childTabs", []), tab_id, key)
         if child_result is not None:
             return child_result
     return None
@@ -153,7 +173,8 @@ def read_tab(
     revision_id = doc.get("revisionId", "")
 
     if format == "markdown":
-        md, lossy = to_markdown(body)
+        lists = _find_tab_lists(doc, tab_id)
+        md, lossy = to_markdown(body, lists=lists)
         return ReadResult(
             doc_id=doc_id,
             tab_id=tab_id,

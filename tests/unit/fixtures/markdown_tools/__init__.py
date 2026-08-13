@@ -128,6 +128,29 @@ def _table_elem_with_image(start: int, end: int) -> dict[str, Any]:
     }
 
 
+def _bullet_para(
+    text: str, start: int, list_id: str, nesting: int = 0, end: int | None = None
+) -> dict[str, Any]:
+    """A list-item paragraph. ``bullet`` matches the live API's real shape
+    (issue #65): only ``listId``/``nestingLevel`` — never a glyph type, which
+    lives on the tab's ``lists`` map instead (see
+    ``doc_with_mixed_lists_and_table``)."""
+    if end is None:
+        end = start + len(text)
+    bullet: dict[str, Any] = {"listId": list_id}
+    if nesting:
+        bullet["nestingLevel"] = nesting
+    return {
+        "startIndex": start,
+        "endIndex": end,
+        "paragraph": {
+            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            "bullet": bullet,
+            "elements": [{"startIndex": start, "endIndex": end, "textRun": {"content": text}}],
+        },
+    }
+
+
 def _chip_para(email: str, start: int, end: int) -> dict[str, Any]:
     """A paragraph containing a person chip."""
     return {
@@ -303,6 +326,48 @@ def doc_with_footnote(revision: str = "rev-1") -> dict[str, Any]:
             {
                 "tabProperties": {"tabId": "tab-1", "title": "Tab", "index": 0},
                 "documentTab": {"body": body},
+                "childTabs": [],
+            }
+        ],
+    }
+
+
+def doc_with_mixed_lists_and_table(revision: str = "rev-2") -> dict[str, Any]:
+    """Doc with a nested unordered list, a separate ordered list, and a
+    table — the mixed-document regression coverage issue #65 asks for
+    (Criterion 4). Carries a real ``lists`` map on ``documentTab`` so
+    ``to_markdown`` reads the ordered list back as ordered and the nested
+    item back at nesting level 1, matching what a fixed write actually
+    produces.
+    """
+    parent = _bullet_para("Parent bullet\n", 1, "list-unordered", nesting=0)
+    child = _bullet_para("Child bullet\n", parent["endIndex"], "list-unordered", nesting=1)
+    first = _bullet_para("First\n", child["endIndex"], "list-ordered", nesting=0)
+    second = _bullet_para("Second\n", first["endIndex"], "list-ordered", nesting=0)
+    table = _table_elem(second["endIndex"], second["endIndex"] + 50)
+    body = {"content": [parent, child, first, second, table]}
+    return {
+        "documentId": "doc-mixed",
+        "revisionId": revision,
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "tab-1", "title": "Tab", "index": 0},
+                "documentTab": {
+                    "body": body,
+                    "lists": {
+                        "list-unordered": {
+                            "listProperties": {
+                                "nestingLevels": [
+                                    {"glyphSymbol": "●"},
+                                    {"glyphSymbol": "○"},
+                                ]
+                            }
+                        },
+                        "list-ordered": {
+                            "listProperties": {"nestingLevels": [{"glyphType": "DECIMAL"}]}
+                        },
+                    },
+                },
                 "childTabs": [],
             }
         ],

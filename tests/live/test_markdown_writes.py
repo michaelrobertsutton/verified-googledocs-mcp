@@ -157,6 +157,122 @@ class TestReplaceTabMarkdown:
         )
         assert r.data["structural_match"] is True
 
+    async def test_issue_65_minimal_repro_round_trips(self, client, scratch_doc):
+        """Verbatim from issue #65: nested unordered list + a separate
+        ordered list. Before the fix this landed with every child flattened
+        to nesting level 0 and every numbered item rendered as a bullet,
+        while still reporting VERIFICATION_FAILED after already mutating
+        the document."""
+        markdown = "* Parent bullet\n  * Child bullet\n\n1. First\n2. Second\n"
+        r = await client.call_tool(
+            "replace_tab_markdown",
+            {
+                "doc_id": scratch_doc.doc_id,
+                "tab_id": scratch_doc.primary_tab,
+                "markdown": markdown,
+            },
+        )
+        assert r.data["applied"] is True
+        assert r.data["structural_match"] is True
+        assert "structural_diff" not in r.data
+        assert r.data["write_status"] == "written_verified"
+        assert r.data["retry_safe"] is True
+
+        content = await _read(client, scratch_doc.doc_id, scratch_doc.primary_tab)
+        assert "- Parent bullet" in content
+        assert "  - Child bullet" in content  # nested one level, not flattened
+        assert "1. First" in content
+        assert "2. Second" in content  # numbered, not flattened to bullets
+
+    async def test_mixed_nested_list_ordered_list_and_table_round_trips(
+        self, client, scratch_doc, tmp_path
+    ):
+        """issue #65 Criterion 4: a nested unordered list, a separate
+        ordered list, and a table in the same tab, all in one write."""
+        markdown = (
+            "- Parent bullet\n"
+            "  - Child bullet\n"
+            "\n"
+            "1. First\n"
+            "2. Second\n"
+            "\n"
+            "| Header A | Header B |\n"
+            "|---|---|\n"
+            "| Cell 1 | Cell 2 |\n"
+        )
+        r = await client.call_tool(
+            "replace_tab_markdown",
+            {
+                "doc_id": scratch_doc.doc_id,
+                "tab_id": scratch_doc.primary_tab,
+                "markdown": markdown,
+            },
+        )
+        assert r.data["applied"] is True
+        assert r.data["structural_match"] is True
+        assert "structural_diff" not in r.data
+
+        # diff_tab_vs_file catches what block-level structural_match can't:
+        # exact ordered-marker text and indent-width arithmetic. Compared
+        # against the reader's own rendering conventions, not the input
+        # verbatim: consecutive list items always render tight (no blank
+        # line) regardless of whether they belong to the same list — that
+        # is a pre-existing, unrelated presentational choice in
+        # markdown.py's block-separation logic, not something this fix
+        # changes — and the pipe-table separator row always renders with
+        # spaces ("| --- | --- |").
+        expected_rendered = (
+            "- Parent bullet\n"
+            "  - Child bullet\n"
+            "1. First\n"
+            "2. Second\n"
+            "\n"
+            "| Header A | Header B |\n"
+            "| --- | --- |\n"
+            "| Cell 1 | Cell 2 |\n"
+        )
+        f = tmp_path / "mixed.md"
+        f.write_text(expected_rendered, encoding="utf-8")
+        diff = (
+            await client.call_tool(
+                "diff_tab_vs_file",
+                {
+                    "doc_id": scratch_doc.doc_id,
+                    "tab_id": scratch_doc.primary_tab,
+                    "file_path": str(f),
+                },
+            )
+        ).data
+        assert diff["identical"] is True, diff["unified_diff"]
+
+    async def test_link_url_shapes_survive_structural_match(self, client, scratch_doc):
+        """`_blocks_structurally_equal` now compares `link_targets` on the
+        post-write side too (issue #65's adjacent fix). That comparison uses
+        whatever URL Docs actually stored, not what was sent — if Docs
+        normalizes a URL (adds a trailing slash, re-encodes a space, etc.)
+        this would false-positive VERIFICATION_FAILED *after* the batchUpdate
+        landed, which is exactly the mutate-then-fail failure mode issue #65
+        removes for lists. Pin that Docs round-trips these shapes byte-exact.
+        """
+        markdown = (
+            "[bare](https://example.com)\n\n"
+            "[slash](https://example.com/)\n\n"
+            "[query](https://example.com/a?b=c&d=e)\n\n"
+            "[frag](https://example.com/a#sec)\n\n"
+            "[space](https://example.com/a%20b)\n"
+        )
+        r = await client.call_tool(
+            "replace_tab_markdown",
+            {
+                "doc_id": scratch_doc.doc_id,
+                "tab_id": scratch_doc.primary_tab,
+                "markdown": markdown,
+            },
+        )
+        assert r.data["applied"] is True, r.data
+        assert r.data["structural_match"] is True, r.data.get("structural_diff")
+        assert "structural_diff" not in r.data
+
 
 # ---------------------------------------------------------------------------
 # Tables — regression coverage for the table-write fix
@@ -488,6 +604,218 @@ class TestTableGeometryProbe:
                 assert para_start == table_start + 3 + r_idx * stride + 2 * c_idx
 
         assert table_elem["endIndex"] == table_start + rows * stride + 2
+
+
+class TestBulletNestingProbe:
+    """Pins the Docs API's list-nesting mechanism as a living contract test
+    for issue #65 (nested lists and ordered lists lost on write).
+
+    Uses *raw* batchUpdate requests, independent of markdown_writer.py /
+    markdown.py, so a compiler regression can never mask what the live API
+    actually does. If Google ever changes this behaviour, this test fails
+    before any compiler/reader regression test does.
+
+    Confirmed (2026-08-13, against a scratch copy of the canonical fixture):
+
+    1. A *single* ``createParagraphBullets`` request applied over a range
+       spanning paragraphs with 0, 1, 2 leading tabs produces
+       ``bullet.nestingLevel`` 0, 1, 2 respectively on the three paragraphs —
+       nesting is derived per-paragraph from each paragraph's own leading-tab
+       count, not fixed for the whole range.
+    2. The leading tabs are consumed by the request: ``textRun.content`` no
+       longer contains them afterward (confirmed no list-item text starts
+       with ``"\\t"``).
+    3. ``bullet`` on a created paragraph is exactly
+       ``{"listId": ..., "nestingLevel": ..., "textStyle": {...}}`` (nestingLevel
+       omitted key entirely for level 0) — there is no ``listProperties`` key
+       on the bullet itself. This confirms markdown.py's
+       ``bullet.get("listProperties")`` lookup (the pre-#65 reader bug) can
+       never succeed; list properties live on ``body["lists"][listId]``.
+    4. ``lists[listId].listProperties.nestingLevels`` has exactly 9 entries
+       (levels 0-8) for *both* presets. For ``NUMBERED_DECIMAL_ALPHA_ROMAN``
+       every entry carries a ``glyphType``, cycling ``DECIMAL`` (0, 3, 6),
+       ``ALPHA`` (1, 4, 7), ``ROMAN`` (2, 5, 8) — confirmed by direct dump,
+       not just the two levels this probe asserts on. For
+       ``BULLET_DISC_CIRCLE_SQUARE`` every entry instead carries a
+       ``glyphSymbol`` (``●``/``○``/``■`` cycling) and **no** ``glyphType``
+       key at all. This confirms a positive membership test against the
+       known ordered ``glyphType`` values (DECIMAL, ALPHA, ROMAN,
+       UPPER_ALPHA, UPPER_ROMAN, ZERO_DECIMAL — the other three never appear
+       for this preset, but do for other numbered presets the Docs UI
+       offers) is the correct way for the reader to detect an ordered list,
+       never a fallback-to-BULLET default.
+    5. Nesting clamps at the preset's defined depth rather than erroring:
+       source depths 0-7 map to ``nestingLevel`` 0-7 one-to-one, and every
+       depth 8 and beyond (tested through depth 13) reads back as
+       ``nestingLevel`` 8 — the preset's deepest defined level. The compiler
+       must therefore *refuse* markdown nested deeper than level 8, rather
+       than silently emit a request Google will clamp — clamping would make
+       both sides of the structural comparison agree on the wrong
+       (flattened) level and falsely verify.
+    """
+
+    @staticmethod
+    def _tab_doc_and_body(docs, doc_id, tab_id):  # type: ignore[no-untyped-def]
+        from verified_googledocs_mcp.docs import _find_tab_body, fetch_document
+
+        doc = fetch_document(docs, doc_id)
+        return doc, _find_tab_body(doc, tab_id)
+
+    @staticmethod
+    def _find_tab_lists(doc, tab_id):  # type: ignore[no-untyped-def]
+        for t in doc.get("tabs", []):
+            if t.get("tabProperties", {}).get("tabId") == tab_id:
+                return t.get("documentTab", {}).get("lists", {})
+        return doc.get("lists", {})
+
+    async def test_single_request_nesting_derived_per_paragraph_and_tabs_stripped(
+        self, live_services, scratch_doc
+    ):
+        docs, _ = live_services
+        s = scratch_doc
+        insert_at = 1
+        text = "a\n\tb\n\t\tc\n"  # 9 ASCII chars: nesting 0, 1, 2
+        end_index = insert_at + len(text)
+
+        docs.documents().batchUpdate(
+            documentId=s.doc_id,
+            body={
+                "requests": [
+                    {
+                        "insertText": {
+                            "location": {"index": insert_at, "tabId": s.primary_tab},
+                            "text": text,
+                        }
+                    }
+                ]
+            },
+        ).execute(num_retries=3)
+
+        docs.documents().batchUpdate(
+            documentId=s.doc_id,
+            body={
+                "requests": [
+                    {
+                        "createParagraphBullets": {
+                            "range": {
+                                "startIndex": insert_at,
+                                "endIndex": end_index,
+                                "tabId": s.primary_tab,
+                            },
+                            "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+                        }
+                    }
+                ]
+            },
+        ).execute(num_retries=3)
+
+        doc, body = self._tab_doc_and_body(docs, s.doc_id, s.primary_tab)
+        paras = [e["paragraph"] for e in body["content"] if "paragraph" in e][:3]
+        assert len(paras) == 3, "expected the three inserted paragraphs first in the tab body"
+
+        for expected_nesting, para in zip((0, 1, 2), paras):
+            bullet = para.get("bullet")
+            assert bullet is not None, f"paragraph has no bullet: {para!r}"
+            assert bullet.get("nestingLevel", 0) == expected_nesting
+            assert "listProperties" not in bullet, (
+                "bullet unexpectedly carries listProperties — the reader fix's "
+                f"premise is wrong: {bullet!r}"
+            )
+            text_content = "".join(
+                el["textRun"]["content"] for el in para.get("elements", []) if "textRun" in el
+            )
+            assert not text_content.startswith("\t"), (
+                f"leading tab survived createParagraphBullets: {text_content!r}"
+            )
+
+        list_id = paras[0]["bullet"]["listId"]
+        lists = self._find_tab_lists(doc, s.primary_tab)
+        nesting_levels = lists[list_id]["listProperties"]["nestingLevels"]
+        for level in (0, 1, 2):
+            assert "glyphType" not in nesting_levels[level], (
+                f"unordered preset level {level} unexpectedly has glyphType: "
+                f"{nesting_levels[level]!r}"
+            )
+            assert "glyphSymbol" in nesting_levels[level]
+
+    async def test_ordered_preset_glyph_types_and_max_nesting_depth(
+        self, live_services, scratch_doc
+    ):
+        docs, _ = live_services
+        s = scratch_doc
+        insert_at = 1
+        # Levels 0-11: more than any preset defines, to find where nesting clamps.
+        depths = list(range(12))
+        text = "".join("\t" * d + str(d) + "\n" for d in depths)
+        end_index = insert_at + len(text)
+
+        docs.documents().batchUpdate(
+            documentId=s.doc_id,
+            body={
+                "requests": [
+                    {
+                        "insertText": {
+                            "location": {"index": insert_at, "tabId": s.primary_tab},
+                            "text": text,
+                        }
+                    }
+                ]
+            },
+        ).execute(num_retries=3)
+
+        docs.documents().batchUpdate(
+            documentId=s.doc_id,
+            body={
+                "requests": [
+                    {
+                        "createParagraphBullets": {
+                            "range": {
+                                "startIndex": insert_at,
+                                "endIndex": end_index,
+                                "tabId": s.primary_tab,
+                            },
+                            "bulletPreset": "NUMBERED_DECIMAL_ALPHA_ROMAN",
+                        }
+                    }
+                ]
+            },
+        ).execute(num_retries=3)
+
+        doc, body = self._tab_doc_and_body(docs, s.doc_id, s.primary_tab)
+        paras = [e["paragraph"] for e in body["content"] if "paragraph" in e][: len(depths)]
+        assert len(paras) == len(depths)
+
+        observed_nesting = [p["bullet"].get("nestingLevel", 0) for p in paras]
+        # Nesting must never exceed the deepest requested depth, and must be
+        # monotonically non-decreasing per source depth up to the clamp point.
+        max_observed = max(observed_nesting)
+        assert max_observed <= max(depths)
+        # Record where the API stopped increasing nesting (the preset's max
+        # defined level) — the compiler must refuse markdown nested deeper
+        # than this rather than silently emit a request Google will clamp.
+        clamp_level = observed_nesting[-1]
+        for i in range(1, len(observed_nesting)):
+            assert observed_nesting[i] >= observed_nesting[i - 1] - 0, (
+                f"nesting must not decrease as source depth increases: {observed_nesting!r}"
+            )
+
+        list_id = paras[0]["bullet"]["listId"]
+        lists = self._find_tab_lists(doc, s.primary_tab)
+        nesting_levels = lists[list_id]["listProperties"]["nestingLevels"]
+        ordered_glyph_types = {nl.get("glyphType") for nl in nesting_levels if "glyphType" in nl}
+        assert ordered_glyph_types, "expected at least one ordered glyphType in the preset"
+        assert ordered_glyph_types <= {
+            "DECIMAL",
+            "ALPHA",
+            "ROMAN",
+            "UPPER_ALPHA",
+            "UPPER_ROMAN",
+            "ZERO_DECIMAL",
+        }
+        # Surface the clamp depth for the compiler's own max-nesting refusal —
+        # not a hard assertion (Google could redefine preset depth), but a
+        # sanity bound so this probe fails loudly if the assumption changes.
+        assert clamp_level < len(depths)
 
 
 class TestUnsupportedMarkdown:

@@ -160,20 +160,55 @@ def test_link_text_is_inserted():
 # ---------------------------------------------------------------------------
 
 
-def test_unordered_list_produces_bullets():
+def test_unordered_list_produces_one_bullet_request_covering_both_items():
+    # One request per contiguous run (issue #65), not one per item — this is
+    # what lets createParagraphBullets derive per-paragraph nesting from
+    # leading tabs in a single pass, and keeps ordered numbering continuous.
     reqs = compile_markdown("- item one\n- item two\n")
     bullet_reqs = _find_requests(reqs, "createParagraphBullets")
-    assert len(bullet_reqs) == 2
-    for br in bullet_reqs:
-        assert br["bulletPreset"] == "BULLET_DISC_CIRCLE_SQUARE"
+    assert len(bullet_reqs) == 1
+    assert bullet_reqs[0]["bulletPreset"] == "BULLET_DISC_CIRCLE_SQUARE"
+    assert bullet_reqs[0]["range"]["startIndex"] == 1
+    assert bullet_reqs[0]["range"]["endIndex"] == 1 + len("item one\nitem two\n")
 
 
-def test_ordered_list_produces_numbered_bullets():
+def test_ordered_list_produces_one_bullet_request_covering_both_items():
     reqs = compile_markdown("1. first\n2. second\n")
     bullet_reqs = _find_requests(reqs, "createParagraphBullets")
+    assert len(bullet_reqs) == 1
+    assert bullet_reqs[0]["bulletPreset"] == "NUMBERED_DECIMAL_ALPHA_ROMAN"
+
+
+def test_two_lists_separated_by_a_paragraph_produce_separate_bullet_requests():
+    # A plain paragraph between two lists never gets its own _ParagraphStyle
+    # entry — the gap between the two bullet ranges (not an explicit marker)
+    # is what must keep it from being swept into either list's range.
+    src = "- item one\n\nplain paragraph\n\n- item two\n"
+    reqs = compile_markdown(src)
+    bullet_reqs = _find_requests(reqs, "createParagraphBullets")
     assert len(bullet_reqs) == 2
-    for br in bullet_reqs:
-        assert br["bulletPreset"] == "NUMBERED_DECIMAL_ALPHA_ROMAN"
+    # "plain paragraph" text must fall strictly between the two ranges.
+    ends = sorted(br["range"]["endIndex"] for br in bullet_reqs)
+    starts = sorted(br["range"]["startIndex"] for br in bullet_reqs)
+    assert ends[0] < starts[1]
+
+
+def test_list_nesting_beyond_max_level_raises_unsupported_markdown():
+    # 9 nesting levels (0-8) are the deepest a Docs bullet preset defines
+    # (confirmed live); a 10th level must be refused, not silently clamped —
+    # clamping would make both sides of structural verification agree on
+    # the wrong (flattened) level and falsely report success.
+    src = "\n".join(f"{'  ' * i}- level {i}" for i in range(10)) + "\n"
+    with pytest.raises(UnsupportedMarkdown) as exc_info:
+        compile_markdown(src)
+    assert "nesting" in exc_info.value.construct
+
+
+def test_list_nesting_at_max_level_is_accepted():
+    src = "\n".join(f"{'  ' * i}- level {i}" for i in range(9)) + "\n"
+    reqs = compile_markdown(src)  # must not raise
+    bullet_reqs = _find_requests(reqs, "createParagraphBullets")
+    assert len(bullet_reqs) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -181,12 +216,13 @@ def test_ordered_list_produces_numbered_bullets():
 # ---------------------------------------------------------------------------
 
 
-def test_nested_unordered_list():
+def test_nested_unordered_list_produces_one_bullet_request_covering_all_items():
     src = "- parent\n  - child\n  - child 2\n"
     reqs = compile_markdown(src)
     bullet_reqs = _find_requests(reqs, "createParagraphBullets")
-    # 1 parent + 2 children = 3 bullet paragraphs.
-    assert len(bullet_reqs) == 3
+    # 1 parent + 2 children, all unordered, all one contiguous run.
+    assert len(bullet_reqs) == 1
+    assert bullet_reqs[0]["bulletPreset"] == "BULLET_DISC_CIRCLE_SQUARE"
 
 
 def test_nested_list_insert_text_present():
@@ -195,6 +231,45 @@ def test_nested_list_insert_text_present():
     combined = "".join(_insert_texts(reqs))
     assert "parent" in combined
     assert "child" in combined
+
+
+def test_nested_list_child_text_is_prefixed_with_one_leading_tab():
+    # createParagraphBullets derives nesting from leading tabs (confirmed
+    # live) — the compiler must emit exactly one tab per nesting level as
+    # its own isolated insertText, ahead of the item's real inline text.
+    src = "- parent\n  - child\n"
+    reqs = compile_markdown(src)
+    texts = _insert_texts(reqs)
+    assert "\t" in texts
+    assert texts.count("\t") == 1
+
+
+def test_mixed_ordered_and_unordered_produces_two_bullet_requests():
+    # A nested ordered sub-list under an unordered parent must not share a
+    # request with the parent — bulletPreset is one value per request, so
+    # mixing ordered/unordered levels needs separate runs (documented
+    # limitation: numbering restarts across the boundary).
+    src = "- parent\n  1. sub one\n  2. sub two\n"
+    reqs = compile_markdown(src)
+    bullet_reqs = _find_requests(reqs, "createParagraphBullets")
+    assert len(bullet_reqs) == 2
+    presets = {br["bulletPreset"] for br in bullet_reqs}
+    assert presets == {"BULLET_DISC_CIRCLE_SQUARE", "NUMBERED_DECIMAL_ALPHA_ROMAN"}
+
+
+def test_bullet_requests_are_emitted_last_and_in_descending_start_order():
+    # Every insertText/updateTextStyle/updateParagraphStyle request must run
+    # before any createParagraphBullets request, and bullet requests among
+    # themselves must run highest-start-first — otherwise an earlier run's
+    # tab-strip would shift the not-yet-applied lower-start run's indices.
+    src = "# Heading\n\n- item one\n\nplain paragraph\n\n- item two\n"
+    reqs = compile_markdown(src)
+    bullet_indices = [i for i, r in enumerate(reqs) if "createParagraphBullets" in r]
+    other_indices = [i for i, r in enumerate(reqs) if "createParagraphBullets" not in r]
+    assert other_indices, "expected non-bullet requests"
+    assert max(other_indices) < min(bullet_indices)
+    starts = [reqs[i]["createParagraphBullets"]["range"]["startIndex"] for i in bullet_indices]
+    assert starts == sorted(starts, reverse=True)
 
 
 # ---------------------------------------------------------------------------

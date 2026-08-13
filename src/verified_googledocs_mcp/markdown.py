@@ -36,7 +36,9 @@ class LossyElement:
     context: dict[str, Any] = field(default_factory=dict)
 
 
-def to_markdown(tab_body: dict[str, Any]) -> tuple[str, list[LossyElement]]:
+def to_markdown(
+    tab_body: dict[str, Any], lists: dict[str, Any] | None = None
+) -> tuple[str, list[LossyElement]]:
     """Convert a Docs API tab body dict to (markdown_string, lossy_elements).
 
     Use this instead of Drive files.export whenever you need markdown for a
@@ -44,8 +46,15 @@ def to_markdown(tab_body: dict[str, Any]) -> tuple[str, list[LossyElement]]:
 
     tab_body: the value of document['documentTab']['body'] (or the top-level
     'body' for tabless docs treated as a single implicit tab).
+    lists: the tab's ``lists`` map (listId -> List), from
+    ``docs._find_tab_lists``. A paragraph's ``bullet`` never carries the
+    glyph type that distinguishes ordered from unordered (confirmed live —
+    see ``tests/live/test_markdown_writes.py::TestBulletNestingProbe``); that
+    lives here. Omitting it (the default) means every list renders as
+    unordered — the pre-#65 behaviour — which is why every mutation
+    pipeline that calls this for real content now passes it explicitly.
     """
-    converter = _Converter()
+    converter = _Converter(lists=lists)
     md = converter.convert(tab_body)
     return md, converter.lossy_elements
 
@@ -54,12 +63,37 @@ def to_markdown(tab_body: dict[str, Any]) -> tuple[str, list[LossyElement]]:
 # Internal converter
 # ---------------------------------------------------------------------------
 
+# glyphType values the Docs API uses for a numbered list level. An unordered
+# level instead carries a glyphSymbol and no glyphType key at all (confirmed
+# live). Membership in this set — never a fallback-to-unordered default — is
+# how an ordered list level is detected.
+_ORDERED_GLYPH_TYPES = frozenset(
+    {"DECIMAL", "ALPHA", "ROMAN", "UPPER_ALPHA", "UPPER_ROMAN", "ZERO_DECIMAL"}
+)
+
+
+@dataclass
+class _ListFrame:
+    """Sequential-numbering state for one active nesting level while
+    converting a run of list-item paragraphs back to markdown."""
+
+    list_id: str
+    level: int
+    ordered: bool
+    counter: int
+    indent: int  # leading-space count for THIS level's own marker
+
 
 class _Converter:
-    def __init__(self) -> None:
+    def __init__(self, lists: dict[str, Any] | None = None) -> None:
         self.lossy_elements: list[LossyElement] = []
-        self._list_stack: list[str] = []  # "bullet" or "ordered"
-        self._list_counters: list[int] = []
+        self._lists = lists or {}
+        # Stack of active _ListFrame, shallowest first. Keyed on (list_id,
+        # level) rather than reset on every non-list block: this lets a list
+        # that Docs' own "continue numbering" feature split across other
+        # content resume its counter, matching Docs' own semantics, while a
+        # *different* list_id at the same level still starts fresh.
+        self._list_stack: list[_ListFrame] = []
 
     def convert(self, body: dict[str, Any]) -> str:
         # Each rendered block is tracked with whether it is a list item so that
@@ -130,32 +164,76 @@ class _Converter:
         return inline
 
     def _list_item(self, para: dict[str, Any], bullet: dict[str, Any], inline: str) -> str:
-        list_props = bullet.get("listProperties", {})
+        """Render a paragraph's bullet as a markdown list marker.
+
+        Ordered vs unordered is read from ``self._lists[listId]`` — never
+        from ``bullet`` itself, which the Docs API never populates with a
+        glyph type (issue #65; a ``Bullet`` carries only ``listId`` /
+        ``nestingLevel`` / ``textStyle``). Missing from ``self._lists``
+        (e.g. no lists map was supplied) falls back to unordered, matching
+        the pre-#65 behaviour rather than guessing.
+
+        Numbering is reconstructed sequentially — see ``_advance_list_item``
+        — and does not reproduce a list's ``startNumber`` if it isn't 1:
+        markdown has no portable way to carry that through the
+        block-structural comparison used to verify writes, so a list seeded
+        to start at a non-default number reads back renumbered from 1. This
+        is a documented limitation, not a round-trip bug this issue covers.
+        """
+        list_id = bullet.get("listId", "")
         nesting = bullet.get("nestingLevel", 0)
-        indent = "  " * nesting
+        ordered = self._is_ordered_level(list_id, nesting)
+        indent, counter = self._advance_list_item(list_id, nesting, ordered)
 
-        # Determine ordered vs unordered from the glyph type if present.
-        # The glyph type lives on the list definition in the parent document;
-        # we only have a fragment here, so we fall back to BULLET for any
-        # type we cannot distinguish.
-        glyph_type = (
-            list_props.get("nestingLevel", [{}])[
-                nesting if nesting < len(list_props.get("nestingLevel", [])) else 0
-            ].get("glyphType", "BULLET")
-            if "nestingLevel" in list_props
-            else "BULLET"
-        )
-
-        if glyph_type in (
-            "DECIMAL",
-            "ALPHA",
-            "ROMAN",
-            "UPPER_ALPHA",
-            "UPPER_ROMAN",
-            "ZERO_DECIMAL",
-        ):
-            return f"{indent}1. {inline}"
+        if ordered:
+            return f"{indent}{counter}. {inline}"
         return f"{indent}- {inline}"
+
+    def _is_ordered_level(self, list_id: str, nesting: int) -> bool:
+        nesting_levels = (
+            self._lists.get(list_id, {}).get("listProperties", {}).get("nestingLevels", [])
+        )
+        if nesting >= len(nesting_levels):
+            return False
+        return nesting_levels[nesting].get("glyphType") in _ORDERED_GLYPH_TYPES
+
+    def _advance_list_item(self, list_id: str, level: int, ordered: bool) -> tuple[str, int]:
+        """Advance (or start) the counter for this (list_id, level) and
+        return (leading-space indent, 1-based counter) for the current item.
+
+        Indent is the sum of every ancestor's own marker width (e.g. after
+        "1. " a child indents by 3, after "- " by 2) — not a fixed
+        ``"  " * nesting`` — because CommonMark nesting is determined by
+        whether a child's indent reaches the column where its parent's own
+        content starts. A fixed 2-space indent under a "1. " parent (content
+        starts at column 3) does not re-parse as nested.
+        """
+        stack = self._list_stack
+        # Pop every frame deeper than this level, and — if the frame *at*
+        # this level belongs to a different list — pop that too, so a new
+        # list at the same nesting depth starts its own counter at 1 rather
+        # than continuing a prior, unrelated list's count.
+        while stack and stack[-1].level >= level:
+            if stack[-1].level == level and stack[-1].list_id == list_id:
+                break
+            stack.pop()
+
+        if stack and stack[-1].level == level:
+            frame = stack[-1]
+            frame.counter += 1
+            frame.ordered = ordered
+        else:
+            parent_indent = 0
+            if stack:
+                parent = stack[-1]
+                marker = f"{parent.counter}. " if parent.ordered else "- "
+                parent_indent = parent.indent + len(marker)
+            frame = _ListFrame(
+                list_id=list_id, level=level, ordered=ordered, counter=1, indent=parent_indent
+            )
+            stack.append(frame)
+
+        return " " * frame.indent, frame.counter
 
     # ------------------------------------------------------------------
     # Inline elements within a paragraph
@@ -272,7 +350,7 @@ class _Converter:
             for cell in cells:
                 # Each cell has its own content list of structural elements.
                 cell_body = {"content": cell.get("content", [])}
-                cell_converter = _Converter()
+                cell_converter = _Converter(lists=self._lists)
                 cell_md = cell_converter.convert(cell_body).strip()
                 # Propagate lossy elements from the nested conversion.
                 self.lossy_elements.extend(cell_converter.lossy_elements)
